@@ -1,14 +1,13 @@
-    # =====================================================================
-# ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v3.0 (DeepSeek V3 엔진 적용)
-# 주요 추가: ①모바일 반응형 CSS ②DeepSeek 429 백오프 재시도
+# =====================================================================
+# ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v3.0
+# 주요 추가: ①모바일 반응형 CSS ②Gemini 429 백오프 재시도
 #            ③SQLite timeout 동시성 락 방지 ④컨텍스트 정제
 #            ⑤실시간 활동 bar_chart ⑥메모 핀(고정) 기능
-#            ⑦Gemini -> DeepSeek V3 공식 API 완전 교체 (openai 패키지)
 # =====================================================================
 
 import streamlit as st
 import sqlite3
-from openai import OpenAI  # 구글 genai 대신 openai 패키지 사용
+import google.generativeai as genai
 import os
 import time
 from datetime import datetime
@@ -44,9 +43,9 @@ MEMBER_COLORS = {
     "현수민": "#a5d6ff"
 }
 
-# DeepSeek 백오프 설정
-DEEPSEEK_MAX_RETRIES = 3   # 최대 재시도 횟수
-DEEPSEEK_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
+# Gemini 백오프 설정
+GEMINI_MAX_RETRIES = 3   # 최대 재시도 횟수
+GEMINI_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
 
 
 # ====================== CSS (모바일 반응형 + 편의성 개선) ======================
@@ -411,48 +410,43 @@ def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ====================== DeepSeek V3 통신 (OpenAI 패키지 활용) ======================
-def init_deepseek():
-    if "deepseek_ready" not in st.session_state:
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+# ====================== Gemini — 429 백오프 재시도 ======================
+def init_gemini():
+    if "gemini_ready" not in st.session_state:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
         if api_key:
-            # DeepSeek API는 OpenAI 클라이언트와 완벽 호환됩니다.
-            st.session_state.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-            st.session_state.deepseek_ready = True
+            genai.configure(api_key=api_key)
+            st.session_state.model = genai.GenerativeModel("gemini-2.5-flash")
+            st.session_state.gemini_ready = True
         else:
-            st.session_state.deepseek_ready = False
+            st.session_state.gemini_ready = False
 
 
-def call_deepseek(prompt: str, role: str) -> str:
+def call_gemini(prompt: str, role: str) -> str:
     """
-    DeepSeek V3 공식 API 호출 with 지수 백오프 재시도.
-    429(할당량 초과) 감지 시 최대 DEEPSEEK_MAX_RETRIES 회 자동 재시도.
+    Gemini API 호출 with 지수 백오프 재시도.
+    429(할당량 초과) 감지 시 최대 GEMINI_MAX_RETRIES 회 자동 재시도.
     에러 응답은 '❌' 접두어로 시작 → 컨텍스트 정제 함수로 필터링됨.
     """
-    if not st.session_state.get("deepseek_ready"):
-        return "⚠️ DEEPSEEK_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
+    if not st.session_state.get("gemini_ready"):
+        return "⚠️ GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
 
     system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["🗣️ 자유 대화"])
+    full_prompt = system + "\n\n" + prompt
 
-    delay = DEEPSEEK_BASE_DELAY
-    for attempt in range(1, DEEPSEEK_MAX_RETRIES + 1):
+    delay = GEMINI_BASE_DELAY
+    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
         try:
-            response = st.session_state.client.chat.completions.create(
-                model="deepseek-chat",  # DeepSeek V3 공식 모델명
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            return response.choices[0].message.content
+            response = st.session_state.model.generate_content(full_prompt)
+            return response.text
         except Exception as e:
             err_str = str(e)
             is_rate_limit = "429" in err_str or "quota" in err_str.lower() or "resource exhausted" in err_str.lower()
 
-            if is_rate_limit and attempt < DEEPSEEK_MAX_RETRIES:
+            if is_rate_limit and attempt < GEMINI_MAX_RETRIES:
                 # 429 감지: 재시도 대기 안내 + 대기
                 st.toast(
-                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{DEEPSEEK_MAX_RETRIES})",
+                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{GEMINI_MAX_RETRIES})",
                     icon="⏳"
                 )
                 time.sleep(delay)
@@ -622,7 +616,7 @@ def page_home(user, is_admin):
         )
         if st.button("✨ 새 아이디어 받기", type="primary", use_container_width=True, key="home_idea_btn"):
             with st.spinner("🤖 AI가 아이디어를 생각하고 있어요..."):
-                result = call_deepseek(
+                result = call_gemini(
                     "POSCO DX AI 청소년 챌린지 경진대회 프로젝트에 도움이 될 창의적이고 혁신적인 아이디어 3가지를 추천해줘. "
                     "각 아이디어마다 ①핵심 개요 ②주요 기능 ③차별점 순서로 간결하게 설명해줘.",
                     "💡 아이디어 브레인스토밍"
@@ -761,7 +755,7 @@ def page_chat(user):
         full_prompt = f"이전 대화:\n{ctx_text}\n\n현재 질문:\n{prompt}" if len(clean_ctx) > 1 else prompt
 
         with st.spinner("🤖 AI가 생각하고 있어요..."):
-            response = call_deepseek(full_prompt, role)
+            response = call_gemini(full_prompt, role)
 
         st.session_state.messages.append({"role": "assistant", "content": response})
         conn = get_db()
@@ -786,7 +780,7 @@ def page_todo(user, is_admin):
     with st.expander("➕ 새 할 일 추가", expanded=False):
         r1c1, r1c2, r1c3 = st.columns([3, 1, 1])
         with r1c1:
-            new_task = st.text_input("할 일 내용", placeholder="예: DeepSeek API 연동 테스트하기")
+            new_task = st.text_input("할 일 내용", placeholder="예: Gemini API 연동 테스트하기")
         with r1c2:
             assigned = st.selectbox("담당자", list(TEAM_USERS.keys()))
         with r1c3:
@@ -1068,7 +1062,7 @@ def page_code_library(user, is_admin):
     tab_save, tab_browse = st.tabs(["⭐ 코드 저장", "📚 코드 목록"])
 
     with tab_save:
-        title        = st.text_input("코드 제목", placeholder="예: DeepSeek API 스트리밍 호출")
+        title        = st.text_input("코드 제목", placeholder="예: Gemini API 스트리밍 호출")
         desc         = st.text_area("설명 (선택)", placeholder="이 코드가 무엇을 하는지 간단히 설명해주세요", height=70)
         default_code = st.session_state.pop("pending_code", "")
         code         = st.text_area("코드", value=default_code, placeholder="코드를 여기에 붙여넣으세요...", height=320)
@@ -1076,7 +1070,7 @@ def page_code_library(user, is_admin):
         with c1:
             lang = st.selectbox("언어", ["Python", "JavaScript", "SQL", "Bash", "기타"])
         with c2:
-            tags = st.text_input("태그 (쉼표 구분)", placeholder="예: API, DeepSeek, 유틸")
+            tags = st.text_input("태그 (쉼표 구분)", placeholder="예: API, Gemini, 유틸")
         if st.button("⭐ 라이브러리에 저장", type="primary"):
             if title.strip() and code.strip():
                 conn = get_db()
@@ -1268,7 +1262,7 @@ def page_admin(user):
 # ====================== 앱 진입점 ======================
 inject_css()
 init_db()
-init_deepseek()  # Gemini 통신부 삭제, DeepSeek로 교체됨
+init_gemini()
 
 # 세션 초기화
 for k, v in [
@@ -1289,7 +1283,7 @@ if st.session_state.logged_in_user is None:
         <div style='text-align:center;margin-bottom:2rem;'>
             <div style='font-size:3.5rem;'>⚓</div>
             <h1 style='color:#00ffcc;font-size:2rem;margin:0.3rem 0;'>AI 팀 관제실</h1>
-            <p style='color:#8b949e;margin:0;'>POSCO DX 7회 AI 청소년 챌린지</p>
+            <p style='color:#8b949e;margin:0;'>POSCO DX 7회 AI 청소년 챌징지</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
