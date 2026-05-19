@@ -1,13 +1,13 @@
 # =====================================================================
 # ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v3.0
-# 주요 추가: ①모바일 반응형 CSS ②Gemini 429 백오프 재시도
+# 주요 추가: ①모바일 반응형 CSS ②DeepSeek 429 백오프 재시도
 #            ③SQLite timeout 동시성 락 방지 ④컨텍스트 정제
 #            ⑤실시간 활동 bar_chart ⑥메모 핀(고정) 기능
 # =====================================================================
 
 import streamlit as st
 import sqlite3
-import google.generativeai as genai
+from openai import OpenAI
 import os
 import time
 from datetime import datetime
@@ -43,9 +43,9 @@ MEMBER_COLORS = {
     "현수민": "#a5d6ff"
 }
 
-# Gemini 백오프 설정
-GEMINI_MAX_RETRIES = 3   # 최대 재시도 횟수
-GEMINI_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
+# DeepSeek 백오프 설정
+DEEPSEEK_MAX_RETRIES = 3   # 최대 재시도 횟수
+DEEPSEEK_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
 
 
 # ====================== CSS (모바일 반응형 + 편의성 개선) ======================
@@ -410,43 +410,51 @@ def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ====================== Gemini — 429 백오프 재시도 ======================
-def init_gemini():
-    if "gemini_ready" not in st.session_state:
-        api_key = os.environ.get("GEMINI_API_KEY", "")
+# ====================== DeepSeek — 429 백오프 재시도 ======================
+def init_deepseek():
+    if "deepseek_ready" not in st.session_state:
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if api_key:
-            genai.configure(api_key=api_key)
-            st.session_state.model = genai.GenerativeModel("gemini-2.5-flash")
-            st.session_state.gemini_ready = True
+            st.session_state.deepseek_client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.deepseek.com"
+            )
+            st.session_state.deepseek_ready = True
         else:
-            st.session_state.gemini_ready = False
+            st.session_state.deepseek_ready = False
 
 
-def call_gemini(prompt: str, role: str) -> str:
+def call_deepseek(prompt: str, role: str) -> str:
     """
-    Gemini API 호출 with 지수 백오프 재시도.
-    429(할당량 초과) 감지 시 최대 GEMINI_MAX_RETRIES 회 자동 재시도.
+    DeepSeek V3 API 호출 with 지수 백오프 재시도.
+    429(할당량 초과) 감지 시 최대 DEEPSEEK_MAX_RETRIES 회 자동 재시도.
     에러 응답은 '❌' 접두어로 시작 → 컨텍스트 정제 함수로 필터링됨.
     """
-    if not st.session_state.get("gemini_ready"):
-        return "⚠️ GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
+    if not st.session_state.get("deepseek_ready"):
+        return "⚠️ DEEPSEEK_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
 
     system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["🗣️ 자유 대화"])
-    full_prompt = system + "\n\n" + prompt
 
-    delay = GEMINI_BASE_DELAY
-    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
+    delay = DEEPSEEK_BASE_DELAY
+    for attempt in range(1, DEEPSEEK_MAX_RETRIES + 1):
         try:
-            response = st.session_state.model.generate_content(full_prompt)
-            return response.text
+            response = st.session_state.deepseek_client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": prompt}
+                ],
+                max_tokens=2048,
+            )
+            return response.choices[0].message.content
         except Exception as e:
             err_str = str(e)
-            is_rate_limit = "429" in err_str or "quota" in err_str.lower() or "resource exhausted" in err_str.lower()
+            is_rate_limit = "429" in err_str or "quota" in err_str.lower() or "rate limit" in err_str.lower()
 
-            if is_rate_limit and attempt < GEMINI_MAX_RETRIES:
+            if is_rate_limit and attempt < DEEPSEEK_MAX_RETRIES:
                 # 429 감지: 재시도 대기 안내 + 대기
                 st.toast(
-                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{GEMINI_MAX_RETRIES})",
+                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{DEEPSEEK_MAX_RETRIES})",
                     icon="⏳"
                 )
                 time.sleep(delay)
@@ -456,6 +464,11 @@ def call_gemini(prompt: str, role: str) -> str:
                 return f"❌ AI 응답 오류 ({attempt}회 시도): {err_str}"
 
     return "❌ AI 응답 실패: 최대 재시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요."
+
+
+# 하위 호환 래퍼 — 기존 call_gemini() 호출 유지
+def call_gemini(prompt: str, role: str) -> str:
+    return call_deepseek(prompt, role)
 
 
 def purge_error_messages(messages: list) -> list:
@@ -1262,7 +1275,7 @@ def page_admin(user):
 # ====================== 앱 진입점 ======================
 inject_css()
 init_db()
-init_gemini()
+init_deepseek()
 
 # 세션 초기화
 for k, v in [
@@ -1283,7 +1296,7 @@ if st.session_state.logged_in_user is None:
         <div style='text-align:center;margin-bottom:2rem;'>
             <div style='font-size:3.5rem;'>⚓</div>
             <h1 style='color:#00ffcc;font-size:2rem;margin:0.3rem 0;'>AI 팀 관제실</h1>
-            <p style='color:#8b949e;margin:0;'>POSCO DX 7회 AI 청소년 챌징지</p>
+            <p style='color:#8b949e;margin:0;'>POSCO DX 7회 AI 청소년 챌린지</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
