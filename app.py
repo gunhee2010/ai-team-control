@@ -1,13 +1,15 @@
 # =====================================================================
-# ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v3.0
-# 주요 추가: ①모바일 반응형 CSS ②DeepSeek 429 백오프 재시도
+# ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v4.0
+# 주요 추가: ①모바일 반응형 CSS ②Groq 429 백오프 재시도
 #            ③SQLite timeout 동시성 락 방지 ④컨텍스트 정제
 #            ⑤실시간 활동 bar_chart ⑥메모 핀(고정) 기능
+#            ⑦DuckDuckGo 무료 웹검색 통합
 # =====================================================================
 
 import streamlit as st
 import sqlite3
 from openai import OpenAI
+from duckduckgo_search import DDGS
 import os
 import time
 from datetime import datetime
@@ -34,7 +36,8 @@ ROLE_PROMPTS = {
     "💻 코딩 도우미":      "너는 파이썬 전문 시니어 개발자야. 실용적이고 최적화된 코드를 작성해줘. 코드에는 항상 주석을 달고, 사용 예시도 포함해줘. 한국어로 설명해.",
     "🔧 에러 수정 전문가": "너는 디버깅 전문가야. 에러 원인을 명확히 분석하고, 수정된 코드와 재발방지 방법을 순서대로 알려줘. 한국어로 답변해.",
     "📄 문서 작성 도우미": "너는 기술 문서 전문가야. AI 경진대회 보고서에 바로 사용할 수 있게 전문적이고 구조적으로 작성해. 한국어로 작성해.",
-    "💡 아이디어 브레인스토밍": "너는 창의적인 아이디어 전문가야. AI 경진대회에서 차별화될 수 있는 혁신적이고 실현 가능한 아이디어를 제안해. 각 아이디어의 장점과 구현 방법도 포함해. 한국어로 답변해."
+    "💡 아이디어 브레인스토밍": "너는 창의적인 아이디어 전문가야. AI 경진대회에서 차별화될 수 있는 혁신적이고 실현 가능한 아이디어를 제안해. 각 아이디어의 장점과 구현 방법도 포함해. 한국어로 답변해.",
+    "🔍 웹 검색 도우미":  "너는 최신 정보 검색 전문가야. 제공된 웹 검색 결과를 바탕으로 정확하고 유용한 정보를 정리해서 알려줘. 출처 URL도 함께 언급해줘. 한국어로 답변해."
 }
 
 MEMBER_COLORS = {
@@ -43,9 +46,9 @@ MEMBER_COLORS = {
     "현수민": "#a5d6ff"
 }
 
-# DeepSeek 백오프 설정
-DEEPSEEK_MAX_RETRIES = 3   # 최대 재시도 횟수
-DEEPSEEK_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
+# Groq 백오프 설정
+GROQ_MAX_RETRIES = 3   # 최대 재시도 횟수
+GROQ_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
 
 
 # ====================== CSS (모바일 반응형 + 편의성 개선) ======================
@@ -410,36 +413,63 @@ def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ====================== DeepSeek — 429 백오프 재시도 ======================
+# ====================== Groq — 429 백오프 재시도 ======================
 def init_deepseek():
+    """Groq API 초기화 (함수명 유지로 하위 호환)"""
     if "deepseek_ready" not in st.session_state:
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+        api_key = os.environ.get("GROQ_API_KEY", "")
         if api_key:
             st.session_state.deepseek_client = OpenAI(
                 api_key=api_key,
-                base_url="https://api.deepseek.com"
+                base_url="https://api.groq.com/openai/v1"
             )
             st.session_state.deepseek_ready = True
         else:
             st.session_state.deepseek_ready = False
 
 
-def call_deepseek(prompt: str, role: str) -> str:
+# ====================== 웹 검색 (DuckDuckGo, 무료·API키 불필요) ======================
+def web_search(query: str, max_results: int = 5) -> str:
+    """DuckDuckGo로 웹 검색 후 결과를 문자열로 반환"""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        if not results:
+            return "검색 결과가 없습니다."
+        lines = []
+        for i, r in enumerate(results, 1):
+            lines.append(f"[{i}] {r.get('title','')}\n{r.get('body','')}\nURL: {r.get('href','')}")
+        return "\n\n".join(lines)
+    except Exception as e:
+        return f"검색 오류: {e}"
+
+
+def call_deepseek(prompt: str, role: str, use_search: bool = False) -> str:
     """
-    DeepSeek V3 API 호출 with 지수 백오프 재시도.
-    429(할당량 초과) 감지 시 최대 DEEPSEEK_MAX_RETRIES 회 자동 재시도.
-    에러 응답은 '❌' 접두어로 시작 → 컨텍스트 정제 함수로 필터링됨.
+    Groq llama-3.3-70b API 호출 with 지수 백오프 재시도.
+    use_search=True 이면 DuckDuckGo 결과를 프롬프트에 주입.
     """
     if not st.session_state.get("deepseek_ready"):
-        return "⚠️ DEEPSEEK_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
+        return "⚠️ GROQ_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
 
     system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["🗣️ 자유 대화"])
 
-    delay = DEEPSEEK_BASE_DELAY
-    for attempt in range(1, DEEPSEEK_MAX_RETRIES + 1):
+    # 웹 검색 결과 주입
+    search_context = ""
+    if use_search or role == "🔍 웹 검색 도우미":
+        with st.spinner("🔍 웹 검색 중..."):
+            search_context = web_search(prompt)
+        prompt = (
+            f"[웹 검색 결과]\n{search_context}\n\n"
+            f"[사용자 질문]\n{prompt}\n\n"
+            "위 검색 결과를 참고해서 답변해줘. 관련 URL도 포함해."
+        )
+
+    delay = GROQ_BASE_DELAY
+    for attempt in range(1, GROQ_MAX_RETRIES + 1):
         try:
             response = st.session_state.deepseek_client.chat.completions.create(
-                model="deepseek-chat",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": prompt}
@@ -449,26 +479,24 @@ def call_deepseek(prompt: str, role: str) -> str:
             return response.choices[0].message.content
         except Exception as e:
             err_str = str(e)
-            is_rate_limit = "429" in err_str or "quota" in err_str.lower() or "rate limit" in err_str.lower()
+            is_rate_limit = "429" in err_str or "rate limit" in err_str.lower()
 
-            if is_rate_limit and attempt < DEEPSEEK_MAX_RETRIES:
-                # 429 감지: 재시도 대기 안내 + 대기
+            if is_rate_limit and attempt < GROQ_MAX_RETRIES:
                 st.toast(
-                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{DEEPSEEK_MAX_RETRIES})",
+                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{GROQ_MAX_RETRIES})",
                     icon="⏳"
                 )
                 time.sleep(delay)
-                delay *= 2  # 지수 백오프: 5s → 10s → 20s
+                delay *= 2
             else:
-                # 재시도 불가 오류 또는 최대 횟수 초과
                 return f"❌ AI 응답 오류 ({attempt}회 시도): {err_str}"
 
     return "❌ AI 응답 실패: 최대 재시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요."
 
 
-# 하위 호환 래퍼 — 기존 call_gemini() 호출 유지
-def call_gemini(prompt: str, role: str) -> str:
-    return call_deepseek(prompt, role)
+# 하위 호환 래퍼
+def call_gemini(prompt: str, role: str, use_search: bool = False) -> str:
+    return call_deepseek(prompt, role, use_search)
 
 
 def purge_error_messages(messages: list) -> list:
@@ -705,6 +733,20 @@ def page_chat(user):
         if st.button("📋 기록 보기", use_container_width=True):
             st.session_state.show_history = not st.session_state.get("show_history", False)
 
+    # 웹검색 토글
+    use_search = st.toggle(
+        "🔍 웹 검색 사용 (최신 정보가 필요할 때 켜세요)",
+        value=(role == "🔍 웹 검색 도우미"),
+        key="web_search_toggle"
+    )
+    if use_search:
+        st.markdown(
+            "<div style='background:rgba(0,255,204,0.06);border:1px solid rgba(0,255,204,0.2);"
+            "border-radius:8px;padding:0.4rem 0.9rem;margin-bottom:0.5rem;font-size:0.82rem;"
+            "color:#00ffcc;'>🌐 웹 검색 활성화 — DuckDuckGo로 최신 정보를 검색합니다</div>",
+            unsafe_allow_html=True
+        )
+
     # 대화 기록 보기 패널
     if st.session_state.get("show_history"):
         with st.expander("📋 저장된 대화 기록", expanded=True):
@@ -768,7 +810,7 @@ def page_chat(user):
         full_prompt = f"이전 대화:\n{ctx_text}\n\n현재 질문:\n{prompt}" if len(clean_ctx) > 1 else prompt
 
         with st.spinner("🤖 AI가 생각하고 있어요..."):
-            response = call_gemini(full_prompt, role)
+            response = call_gemini(full_prompt, role, use_search=use_search)
 
         st.session_state.messages.append({"role": "assistant", "content": response})
         conn = get_db()
@@ -1380,7 +1422,7 @@ else:
 
         st.markdown(
             "<p style='color:#21262d;font-size:0.65rem;text-align:center;margin-top:1rem;'>"
-            "⚓ AI 팀 관제실 v3.0</p>",
+            "⚓ AI 팀 관제실 v4.0</p>",
             unsafe_allow_html=True
         )
 
