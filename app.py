@@ -299,7 +299,7 @@ def init_gemini():
         if api_key:
             try:
                 genai.configure(api_key=api_key)
-                st.session_state.model = genai.GenerativeModel("gemini-1.5-flash") # 무료 요금제 최적화 모델 고정
+                st.session_state.model = genai.GenerativeModel("gemini-2.5-flash") # 무료 요금제 최적화 모델 고정
                 st.session_state.gemini_ready = True
             except Exception as e:
                 st.session_state.gemini_ready = False
