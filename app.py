@@ -1,7 +1,16 @@
+# =====================================================================
+# ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v3.0 (DeepSeek V3 엔진 적용)
+# 주요 추가: ①모바일 반응형 CSS ②DeepSeek 429 백오프 재시도
+#            ③SQLite timeout 동시성 락 방지 ④컨텍스트 정제
+#            ⑤실시간 활동 bar_chart ⑥메모 핀(고정) 기능
+#            ⑦Gemini -> DeepSeek V3 공식 API 완전 교체 (openai 패키지)
+# =====================================================================
+
 import streamlit as st
 import sqlite3
-import google.generativeai as genai
+from openai import OpenAI  # 구글 genai 대신 openai 패키지 사용
 import os
+import time
 from datetime import datetime
 import pandas as pd
 
@@ -19,11 +28,11 @@ TEAM_USERS = {
     "현수민": "0000"
 }
 ADMIN_USER = "최건희"
-DB_PATH = "team_data.db"
+DB_PATH    = "team_data.db"
 
 ROLE_PROMPTS = {
-    "🗣️ 자유 대화": "너는 친근하고 똑똑한 AI 어시스턴트야. 어떤 질문이든 친절하고 명확하게 답변해줘. 한국어로 답변해.",
-    "💻 코딩 도우미": "너는 파이썬 전문 시니어 개발자야. 실용적이고 최적화된 코드를 작성해줘. 코드에는 항상 주석을 달고, 사용 예시도 포함해줘. 한국어로 설명해.",
+    "🗣️ 자유 대화":       "너는 친근하고 똑똑한 AI 어시스턴트야. 어떤 질문이든 친절하고 명확하게 답변해줘. 한국어로 답변해.",
+    "💻 코딩 도우미":      "너는 파이썬 전문 시니어 개발자야. 실용적이고 최적화된 코드를 작성해줘. 코드에는 항상 주석을 달고, 사용 예시도 포함해줘. 한국어로 설명해.",
     "🔧 에러 수정 전문가": "너는 디버깅 전문가야. 에러 원인을 명확히 분석하고, 수정된 코드와 재발방지 방법을 순서대로 알려줘. 한국어로 답변해.",
     "📄 문서 작성 도우미": "너는 기술 문서 전문가야. AI 경진대회 보고서에 바로 사용할 수 있게 전문적이고 구조적으로 작성해. 한국어로 작성해.",
     "💡 아이디어 브레인스토밍": "너는 창의적인 아이디어 전문가야. AI 경진대회에서 차별화될 수 있는 혁신적이고 실현 가능한 아이디어를 제안해. 각 아이디어의 장점과 구현 방법도 포함해. 한국어로 답변해."
@@ -35,15 +44,23 @@ MEMBER_COLORS = {
     "현수민": "#a5d6ff"
 }
 
-# ====================== CSS (디자인 개선 및 글자색 완벽 패치) ======================
+# DeepSeek 백오프 설정
+DEEPSEEK_MAX_RETRIES = 3   # 최대 재시도 횟수
+DEEPSEEK_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
+
+
+# ====================== CSS (모바일 반응형 + 편의성 개선) ======================
 def inject_css():
     st.markdown("""
 <style>
 /* ── Base & Scrollbar ── */
-.stApp { background-color: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.stApp {
+    background-color: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
 .main .block-container { padding: 2rem 2.5rem 4rem; max-width: 1250px; }
 
-/* 깔끔한 커스텀 스크롤바 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: #0d1117; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
@@ -74,7 +91,7 @@ def inject_css():
     transform: translateX(4px);
 }
 
-/* ── Cards (대시보드 요소) ── */
+/* ── Cards ── */
 .card {
     background: #161b27;
     border: 1px solid #30363d;
@@ -84,9 +101,10 @@ def inject_css():
     transition: all 0.2s ease;
 }
 .card:hover { border-color: rgba(0, 255, 204, 0.25); box-shadow: 0 4px 25px rgba(0,255,204,0.05); }
-.card-accent { border-left: 4px solid #00ffcc; }
-.card-blue { border-left: 4px solid #58a6ff; }
-.card-purple { border-left: 4px solid #bc8cff; }
+.card-accent  { border-left: 4px solid #00ffcc; }
+.card-blue    { border-left: 4px solid #58a6ff; }
+.card-purple  { border-left: 4px solid #bc8cff; }
+.card-pinned  { border-left: 4px solid #f0d000; box-shadow: 0 0 10px rgba(240,208,0,0.08); }
 
 /* ── Metric Cards ── */
 .metric-card {
@@ -99,7 +117,7 @@ def inject_css():
     box-shadow: 0 4px 10px rgba(0,0,0,0.2);
 }
 .metric-card:hover { border-color: rgba(0, 255, 204, 0.3); transform: translateY(-3px); }
-.metric-icon { font-size: 1.5rem; margin-bottom: 0.2rem; }
+.metric-icon  { font-size: 1.5rem; margin-bottom: 0.2rem; }
 .metric-value { font-size: 2.1rem; font-weight: 700; color: #00ffcc; line-height: 1.1; margin: 0.3rem 0; text-shadow: 0 0 10px rgba(0,255,204,0.1); }
 .metric-label { font-size: 0.8rem; color: #8b949e; letter-spacing: 0.04em; }
 
@@ -118,24 +136,22 @@ def inject_css():
     transform: translateY(-1px);
     box-shadow: 0 4px 15px rgba(0,255,204,0.3);
 }
-
-/* 일반 버튼 디자인 개선 */
 .stButton > button {
     border-radius: 8px !important;
     border: 1px solid #30363d !important;
     background-color: #161b27 !important;
     color: #cdd9e5 !important;
     transition: all 0.2s;
+    /* 모바일 터치 최소 크기 보장 */
+    min-height: 40px;
 }
-.stButton > button:hover {
-    border-color: #8b949e !important;
-    color: #ffffff !important;
-}
+.stButton > button:hover { border-color: #8b949e !important; color: #ffffff !important; }
 
 /* ── Typography ── */
 h1 { color: #00ffcc !important; font-size: 1.8rem !important; font-weight: 700 !important; margin-bottom: 0.5rem !important; }
 h2 { color: #e6edf3 !important; font-weight: 600 !important; }
 h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
+p  { color: #cdd9e5; line-height: 1.6; }
 
 /* ── Tags ── */
 .tag {
@@ -149,9 +165,10 @@ h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
     margin: 2px;
     font-weight: 500;
 }
-.tag-green { color: #3fb950; background: rgba(63, 185, 80, 0.1); border-color: rgba(63, 185, 80, 0.2); }
-.tag-orange { color: #e3b341; background: rgba(227, 179, 65, 0.1); border-color: rgba(227, 179, 65, 0.2); }
-.tag-red { color: #f85149; background: rgba(248, 81, 73, 0.1); border-color: rgba(248, 81, 73, 0.2); }
+.tag-green  { color: #3fb950; background: rgba(63,185,80,0.1); border-color: rgba(63,185,80,0.2); }
+.tag-orange { color: #e3b341; background: rgba(227,179,65,0.1); border-color: rgba(227,179,65,0.2); }
+.tag-red    { color: #f85149; background: rgba(248,81,73,0.1); border-color: rgba(248,81,73,0.2); }
+.tag-gold   { color: #f0d000; background: rgba(240,208,0,0.1); border-color: rgba(240,208,0,0.25); }
 
 /* ── Activity Feed ── */
 .activity-item {
@@ -181,9 +198,9 @@ h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
     letter-spacing: 0.05em;
     box-shadow: 0 2px 5px rgba(0,0,0,0.15);
 }
-.kh-todo { background: #21262d; color: #9ca3af; border: 1px solid #30363d; }
-.kh-doing { background: rgba(30, 58, 95, 0.6); color: #93c5fd; border: 1px solid #1e3a5f; }
-.kh-done { background: rgba(6, 78, 59, 0.6); color: #6ee7b7; border: 1px solid #064e3b; }
+.kh-todo  { background: #21262d; color: #9ca3af; border: 1px solid #30363d; }
+.kh-doing { background: rgba(30,58,95,0.6); color: #93c5fd; border: 1px solid #1e3a5f; }
+.kh-done  { background: rgba(6,78,59,0.6); color: #6ee7b7; border: 1px solid #064e3b; }
 .task-card {
     background: #161b27;
     border: 1px solid #30363d;
@@ -202,6 +219,8 @@ h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
     border: 1px solid #30363d !important;
     color: #e6edf3 !important;
     border-radius: 8px !important;
+    /* 모바일: 최소 16px → 자동 줌 방지 */
+    font-size: 16px !important;
 }
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus {
@@ -218,7 +237,7 @@ h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
 /* ── Expander ── */
 [data-testid="stExpander"] { background: #161b27; border: 1px solid #30363d; border-radius: 10px; margin: 0.5rem 0; }
 
-/* ── 💬 순정 채팅창 완벽 고정 & 가독성 패치 ── */
+/* ── Chat Messages ── */
 [data-testid="stChatMessage"] {
     background-color: #161b27 !important;
     border: 1px solid #21262d !important;
@@ -226,13 +245,8 @@ h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
     padding: 1rem !important;
     margin: 0.6rem 0 !important;
 }
-[data-testid="stChatMessageUser"] {
-    background-color: #1c2333 !important;
-    border-color: #30363d !important;
-}
-
-/* 채팅 내부의 모든 마크다운 텍스트 가독성 최적화 */
-[data-testid="stChatMessage"] p, 
+[data-testid="stChatMessageUser"] { background-color: #1c2333 !important; border-color: #30363d !important; }
+[data-testid="stChatMessage"] p,
 [data-testid="stChatMessage"] span,
 [data-testid="stChatMessage"] li,
 [data-testid="stChatMessage"] strong,
@@ -249,20 +263,83 @@ code { background: #21262d !important; color: #ff7b72 !important; padding: 2px 6
 pre code { color: #e6edf3 !important; background: transparent !important; padding: 0 !important; font-size: 0.9rem !important; }
 pre { background: #0d1117 !important; border: 1px solid #30363d !important; border-radius: 8px !important; padding: 1rem !important; }
 
-/* ── Divider & Utilities ── */
+/* ── Misc ── */
 hr { border-color: #21262d !important; margin: 1.2rem 0 !important; }
 [data-testid="stAlert"] { border-radius: 8px !important; background-color: #1c1a22 !important; border-color: #443e50 !important; }
 .stSpinner > div { border-color: #00ffcc !important; }
 #MainMenu, footer, header { visibility: hidden; }
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] { border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+
+/* ============================================================
+   📱 모바일 반응형 미디어 쿼리 (≤ 768px)
+   ============================================================ */
+@media (max-width: 768px) {
+    /* 블록 여백 축소 */
+    .main .block-container { padding: 1rem 0.75rem 3rem !important; }
+
+    /* 사이드바: 좁은 화면에서 아이콘 크기 조정 */
+    [data-testid="stSidebar"] .stButton > button {
+        font-size: 0.85rem;
+        padding: 0.55rem 0.8rem;
+    }
+
+    /* h1 폰트 크기 축소 */
+    h1 { font-size: 1.35rem !important; }
+
+    /* 메트릭 카드: 1열 스택 레이아웃으로 전환 */
+    .metric-card { padding: 1rem 0.6rem; }
+    .metric-value { font-size: 1.7rem; }
+
+    /* 버튼 최소 높이 & 터치 영역 확보 */
+    .stButton > button { min-height: 48px !important; font-size: 0.88rem !important; }
+    .stButton > button[kind="primary"] { padding: 0.65rem 1.2rem; }
+
+    /* 칸반: 열 간격 축소 */
+    .task-card { padding: 0.7rem 0.8rem; margin: 0.35rem 0; }
+    .kanban-header { font-size: 0.82rem; padding: 0.5rem 0.6rem; }
+
+    /* 카드 패딩 축소 */
+    .card { padding: 0.9rem 1rem; }
+
+    /* 탭 텍스트 크기 */
+    .stTabs [data-baseweb="tab"] { padding: 0.5rem 0.8rem; font-size: 0.82rem; }
+
+    /* 채팅 입력창 */
+    [data-testid="stChatMessage"] { padding: 0.7rem !important; }
+
+    /* 활동 피드 간격 */
+    .activity-item { gap: 0.5rem; padding: 0.55rem 0; }
+    .activity-dot  { width: 7px; height: 7px; margin-top: 5px; }
+
+    /* 태그 */
+    .tag { padding: 2px 8px; font-size: 0.7rem; }
+}
+
+/* 초소형 화면 (≤ 380px) */
+@media (max-width: 380px) {
+    .main .block-container { padding: 0.7rem 0.5rem 2.5rem !important; }
+    h1 { font-size: 1.15rem !important; }
+    .metric-value { font-size: 1.45rem; }
+    .stButton > button { min-height: 44px !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ====================== DB ======================
+# ====================== DB — timeout으로 동시성 락 방지 ======================
 def get_db():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    """
+    timeout=30.0 : 동시 다중 접속 시 최대 30초 대기 후 OperationalError
+    check_same_thread=False : Streamlit 멀티스레드 환경 대응
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    # WAL 모드: 읽기/쓰기 동시 접근 허용 → 락 충돌 대폭 감소
+    conn.execute("PRAGMA journal_mode=WAL;")
     return conn
+
 
 def init_db():
     conn = get_db()
@@ -285,70 +362,135 @@ def init_db():
         CREATE TABLE IF NOT EXISTS todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_by TEXT, assigned_to TEXT,
-            task TEXT, status TEXT DEFAULT 'todo',
-            priority TEXT DEFAULT 'medium',
+            task TEXT, status TEXT DEFAULT "todo",
+            priority TEXT DEFAULT "medium",
             due_date TEXT, timestamp TEXT
         );
         CREATE TABLE IF NOT EXISTS memos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT, title TEXT, content TEXT,
-            is_shared INTEGER DEFAULT 0, timestamp TEXT
+            is_shared INTEGER DEFAULT 0,
+            is_pinned INTEGER DEFAULT 0,
+            timestamp TEXT
         );
         CREATE TABLE IF NOT EXISTS code_library (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT, title TEXT, description TEXT,
-            code TEXT, language TEXT, tags TEXT,
-            timestamp TEXT
+            code TEXT, language TEXT, tags TEXT, timestamp TEXT
         );
         CREATE TABLE IF NOT EXISTS activity_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT, action TEXT, detail TEXT, timestamp TEXT
         );
     ''')
+    # memos 테이블에 is_pinned 컬럼이 없으면 마이그레이션
+    try:
+        conn.execute("ALTER TABLE memos ADD COLUMN is_pinned INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass  # 이미 있으면 무시
     conn.commit()
     conn.close()
 
+
 def log_activity(username, action, detail=""):
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO activity_log (username, action, detail, timestamp) VALUES (?,?,?,?)",
-        (username, action, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO activity_log (username, action, detail, timestamp) VALUES (?,?,?,?)",
+            (username, action, detail, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.OperationalError as e:
+        # DB 락 발생 시 로그만 기록하고 앱은 계속 구동
+        st.toast(f"⚠️ 활동 기록 실패 (DB 혼잡): {e}", icon="⚠️")
+
 
 def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ====================== Gemini ======================
-def init_gemini():
-    if "gemini_ready" not in st.session_state:
-        api_key = os.environ.get("GEMINI_API_KEY", "")
+# ====================== DeepSeek V3 통신 (OpenAI 패키지 활용) ======================
+def init_deepseek():
+    if "deepseek_ready" not in st.session_state:
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if api_key:
-            genai.configure(api_key=api_key)
-            # 🟢 최신 구글 표준 규격 프로토콜 탑재
-            st.session_state.model = genai.GenerativeModel("gemini-2.5-flash")
-            st.session_state.gemini_ready = True
+            # DeepSeek API는 OpenAI 클라이언트와 완벽 호환됩니다.
+            st.session_state.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+            st.session_state.deepseek_ready = True
         else:
-            st.session_state.gemini_ready = False
+            st.session_state.deepseek_ready = False
 
-def call_gemini(prompt, role):
-    if not st.session_state.get("gemini_ready"):
-        return "⚠️ GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
-    try:
-        system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["🗣️ 자유 대화"])
-        response = st.session_state.model.generate_content(system + "\n\n" + prompt)
-        return response.text
-    except Exception as e:
-        return f"❌ AI 응답 오류: {str(e)}"
+
+def call_deepseek(prompt: str, role: str) -> str:
+    """
+    DeepSeek V3 공식 API 호출 with 지수 백오프 재시도.
+    429(할당량 초과) 감지 시 최대 DEEPSEEK_MAX_RETRIES 회 자동 재시도.
+    에러 응답은 '❌' 접두어로 시작 → 컨텍스트 정제 함수로 필터링됨.
+    """
+    if not st.session_state.get("deepseek_ready"):
+        return "⚠️ DEEPSEEK_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
+
+    system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["🗣️ 자유 대화"])
+
+    delay = DEEPSEEK_BASE_DELAY
+    for attempt in range(1, DEEPSEEK_MAX_RETRIES + 1):
+        try:
+            response = st.session_state.client.chat.completions.create(
+                model="deepseek-chat",  # DeepSeek V3 공식 모델명
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = "429" in err_str or "quota" in err_str.lower() or "resource exhausted" in err_str.lower()
+
+            if is_rate_limit and attempt < DEEPSEEK_MAX_RETRIES:
+                # 429 감지: 재시도 대기 안내 + 대기
+                st.toast(
+                    f"⏳ API 한도 초과 — {delay}초 후 재시도 중... ({attempt}/{DEEPSEEK_MAX_RETRIES})",
+                    icon="⏳"
+                )
+                time.sleep(delay)
+                delay *= 2  # 지수 백오프: 5s → 10s → 20s
+            else:
+                # 재시도 불가 오류 또는 최대 횟수 초과
+                return f"❌ AI 응답 오류 ({attempt}회 시도): {err_str}"
+
+    return "❌ AI 응답 실패: 최대 재시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요."
+
+
+def purge_error_messages(messages: list) -> list:
+    """
+    대화 맥락 정제: '❌' 또는 '⚠️'로 시작하는 AI 오류 응답과
+    해당 오류에 이어진 사용자 메시지 쌍을 컨텍스트에서 제거.
+    """
+    cleaned = []
+    skip_next_user = False
+    for msg in messages:
+        if skip_next_user and msg["role"] == "user":
+            skip_next_user = False
+            continue
+        is_error = msg["role"] == "assistant" and (
+            msg["content"].startswith("❌") or msg["content"].startswith("⚠️")
+        )
+        if is_error:
+            skip_next_user = False  # 오류 응답 자체는 제거
+            continue
+        cleaned.append(msg)
+    return cleaned
 
 
 # ====================== 헬퍼 ======================
 def member_badge(name):
     color = MEMBER_COLORS.get(name, "#8b949e")
-    icon = "👑" if name == ADMIN_USER else "🧑‍💻"
+    icon  = "👑" if name == ADMIN_USER else "🧑‍💻"
     return f"<span style='color:{color}; font-weight:600;'>{icon} {name}</span>"
+
 
 def priority_badge(p):
     mapping = {
@@ -363,15 +505,12 @@ def priority_badge(p):
 # ====================== 페이지: 홈 ======================
 def page_home(user, is_admin):
     hour = datetime.now().hour
-    if hour < 6 or hour >= 22:
-        greet = "🌙 좋은 밤이에요"
-    elif hour < 12:
-        greet = "🌅 좋은 아침이에요"
-    else:
-        greet = "☀️ 좋은 오후예요"
+    if   hour < 6 or hour >= 22: greet = "🌙 좋은 밤이에요"
+    elif hour < 12:               greet = "🌅 좋은 아침이에요"
+    else:                         greet = "☀️ 좋은 오후예요"
 
     color = MEMBER_COLORS.get(user, "#00ffcc")
-    st.markdown(f"<h1>🏠 팀 대시보드</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>🏠 팀 대시보드</h1>", unsafe_allow_html=True)
     st.markdown(
         f"<p style='color:#8b949e; font-size:1rem; margin-bottom:1.5rem;'>"
         f"{greet}, <b style='color:{color};'>{user}</b>님! "
@@ -380,12 +519,12 @@ def page_home(user, is_admin):
     )
 
     # ── 메트릭 ──
-    conn = get_db()
-    todo_n   = conn.execute("SELECT COUNT(*) FROM todos WHERE status='todo'").fetchone()[0]
-    doing_n  = conn.execute("SELECT COUNT(*) FROM todos WHERE status='doing'").fetchone()[0]
-    done_n   = conn.execute("SELECT COUNT(*) FROM todos WHERE status='done'").fetchone()[0]
-    shared_n = conn.execute("SELECT COUNT(*) FROM shared_logs").fetchone()[0]
-    code_n   = conn.execute("SELECT COUNT(*) FROM code_library").fetchone()[0]
+    conn    = get_db()
+    todo_n  = conn.execute("SELECT COUNT(*) FROM todos WHERE status='todo'").fetchone()[0]
+    doing_n = conn.execute("SELECT COUNT(*) FROM todos WHERE status='doing'").fetchone()[0]
+    done_n  = conn.execute("SELECT COUNT(*) FROM todos WHERE status='done'").fetchone()[0]
+    shared_n= conn.execute("SELECT COUNT(*) FROM shared_logs").fetchone()[0]
+    code_n  = conn.execute("SELECT COUNT(*) FROM code_library").fetchone()[0]
     conn.close()
 
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -405,6 +544,20 @@ def page_home(user, is_admin):
             </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── 실시간 팀 활동 차트 (⑤ 신규) ──
+    conn = get_db()
+    act_rows = conn.execute(
+        "SELECT username, COUNT(*) as cnt FROM activity_log GROUP BY username"
+    ).fetchall()
+    conn.close()
+    if act_rows:
+        act_df = pd.DataFrame([{"팀원": r["username"], "활동 수": r["cnt"]} for r in act_rows])
+        act_df = act_df.set_index("팀원")
+        st.markdown("### 📊 팀원별 누적 활동")
+        st.bar_chart(act_df, color="#00ffcc", height=180)
+
+    st.markdown("<br>", unsafe_allow_html=True)
     left, right = st.columns([2, 1])
 
     # ── 최근 활동 ──
@@ -415,7 +568,6 @@ def page_home(user, is_admin):
             "SELECT username, action, detail, timestamp FROM activity_log ORDER BY id DESC LIMIT 10"
         ).fetchall()
         conn.close()
-
         if acts:
             html = ""
             for a in acts:
@@ -457,10 +609,8 @@ def page_home(user, is_admin):
                     <span style='color:#e6edf3;font-size:0.9rem;'>{t["task"]}</span>
                 </div>""", unsafe_allow_html=True)
         else:
-            st.markdown(
-                "<p style='color:#484f58;font-size:0.85rem;'>진행 중인 할 일이 없습니다.</p>",
-                unsafe_allow_html=True
-            )
+            st.markdown("<p style='color:#484f58;font-size:0.85rem;'>진행 중인 할 일이 없습니다.</p>",
+                        unsafe_allow_html=True)
 
     # ── 우측 패널 ──
     with right:
@@ -472,7 +622,7 @@ def page_home(user, is_admin):
         )
         if st.button("✨ 새 아이디어 받기", type="primary", use_container_width=True, key="home_idea_btn"):
             with st.spinner("🤖 AI가 아이디어를 생각하고 있어요..."):
-                result = call_gemini(
+                result = call_deepseek(
                     "POSCO DX AI 청소년 챌린지 경진대회 프로젝트에 도움이 될 창의적이고 혁신적인 아이디어 3가지를 추천해줘. "
                     "각 아이디어마다 ①핵심 개요 ②주요 기능 ③차별점 순서로 간결하게 설명해줘.",
                     "💡 아이디어 브레인스토밍"
@@ -491,7 +641,7 @@ def page_home(user, is_admin):
         st.markdown("<br>### 👥 팀원 현황", unsafe_allow_html=True)
         members = [("최건희", "👑"), ("이서우", "🧑‍💻"), ("현수민", "🧑‍🎨")]
         for name, icon in members:
-            c = MEMBER_COLORS.get(name, "#8b949e")
+            c    = MEMBER_COLORS.get(name, "#8b949e")
             conn = get_db()
             last = conn.execute(
                 "SELECT timestamp FROM activity_log WHERE username=? ORDER BY id DESC LIMIT 1", (name,)
@@ -510,8 +660,10 @@ def page_home(user, is_admin):
 def page_chat(user):
     role = st.session_state.get("ai_role", "🗣️ 자유 대화")
 
-    st.markdown(f"<h1>💬 AI 대화 <span style='font-size:0.9rem;color:#8b949e;'>— {role}</span></h1>",
-                unsafe_allow_html=True)
+    st.markdown(
+        f"<h1>💬 AI 대화 <span style='font-size:0.9rem;color:#8b949e;'>— {role}</span></h1>",
+        unsafe_allow_html=True
+    )
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -599,8 +751,18 @@ def page_chat(user):
     # 입력
     if prompt := st.chat_input(f"{role}에게 메시지를 보내세요..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
+
+        # ④ 컨텍스트 정제: 에러 메시지 제거 후 전달할 프롬프트 구성
+        clean_ctx = purge_error_messages(st.session_state.messages)
+        ctx_text  = "\n".join(
+            [f"[{'사용자' if m['role']=='user' else 'AI'}] {m['content']}"
+             for m in clean_ctx[-10:]]  # 최근 10턴만 포함
+        )
+        full_prompt = f"이전 대화:\n{ctx_text}\n\n현재 질문:\n{prompt}" if len(clean_ctx) > 1 else prompt
+
         with st.spinner("🤖 AI가 생각하고 있어요..."):
-            response = call_gemini(prompt, role)
+            response = call_deepseek(full_prompt, role)
+
         st.session_state.messages.append({"role": "assistant", "content": response})
         conn = get_db()
         conn.execute(
@@ -624,12 +786,12 @@ def page_todo(user, is_admin):
     with st.expander("➕ 새 할 일 추가", expanded=False):
         r1c1, r1c2, r1c3 = st.columns([3, 1, 1])
         with r1c1:
-            new_task = st.text_input("할 일 내용", placeholder="예: Gemini API 연동 테스트하기")
+            new_task = st.text_input("할 일 내용", placeholder="예: DeepSeek API 연동 테스트하기")
         with r1c2:
             assigned = st.selectbox("담당자", list(TEAM_USERS.keys()))
         with r1c3:
             priority = st.selectbox("우선순위", ["🔴 높음", "🟡 중간", "🟢 낮음"])
-        r2c1, r2c2 = st.columns([1, 3])
+        r2c1, _ = st.columns([1, 3])
         with r2c1:
             due_date = st.date_input("마감일", value=None)
         if st.button("➕ 추가하기", type="primary"):
@@ -649,7 +811,7 @@ def page_todo(user, is_admin):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    conn = get_db()
+    conn     = get_db()
     all_todos = conn.execute("SELECT * FROM todos ORDER BY timestamp DESC").fetchall()
     conn.close()
 
@@ -682,8 +844,9 @@ def page_todo(user, is_admin):
                     "doing": [("↩ 되돌리기", "todo"), ("✅ 완료", "done")],
                     "done":  [("↩ 재개", "doing")],
                 }
-                btns = btn_map.get(status, [])
-                bcols = st.columns(len(btns) + (1 if is_admin or task["created_by"] == user else 0))
+                btns  = btn_map.get(status, [])
+                extra = 1 if (is_admin or task["created_by"] == user) else 0
+                bcols = st.columns(len(btns) + extra)
                 for i, (lbl, ns) in enumerate(btns):
                     with bcols[i]:
                         if st.button(lbl, key=f"mv_{task['id']}_{ns}", use_container_width=True):
@@ -708,24 +871,29 @@ def page_todo(user, is_admin):
     render_column(col_done,  "done",  "kh-done",  "✅ 완료")
 
 
-# ====================== 페이지: 메모 ======================
+# ====================== 페이지: 메모 (핀 고정 기능 추가) ======================
 def page_memo(user, is_admin):
     st.markdown("<h1>📝 팀 메모장</h1>", unsafe_allow_html=True)
 
     tab_write, tab_list = st.tabs(["✍️ 새 메모 작성", "📋 메모 목록"])
 
     with tab_write:
-        title = st.text_input("제목", placeholder="메모 제목을 입력하세요")
+        title   = st.text_input("제목", placeholder="메모 제목을 입력하세요")
         content = st.text_area("내용", placeholder="메모 내용을 자유롭게 작성하세요...", height=280)
-        c1, c2 = st.columns([1, 3])
-        with c1:
+        mc1, mc2 = st.columns([1, 1])
+        with mc1:
             is_shared = st.checkbox("👥 팀 전체 공개")
+        with mc2:
+            is_pinned_new = st.checkbox("📌 상단 고정")
         if st.button("💾 저장하기", type="primary"):
             if title.strip() and content.strip():
                 conn = get_db()
                 conn.execute(
-                    "INSERT INTO memos (username,title,content,is_shared,timestamp) VALUES (?,?,?,?,?)",
-                    (user, title.strip(), content.strip(), 1 if is_shared else 0, ts())
+                    "INSERT INTO memos (username,title,content,is_shared,is_pinned,timestamp) VALUES (?,?,?,?,?,?)",
+                    (user, title.strip(), content.strip(),
+                     1 if is_shared else 0,
+                     1 if is_pinned_new else 0,
+                     ts())
                 )
                 conn.commit()
                 conn.close()
@@ -737,13 +905,16 @@ def page_memo(user, is_admin):
 
     with tab_list:
         conn = get_db()
-        memos = (
-            conn.execute("SELECT * FROM memos ORDER BY id DESC").fetchall()
-            if is_admin
-            else conn.execute(
-                "SELECT * FROM memos WHERE username=? OR is_shared=1 ORDER BY id DESC", (user,)
+        # 고정(is_pinned DESC) → 최신(id DESC) 정렬
+        if is_admin:
+            memos = conn.execute(
+                "SELECT * FROM memos ORDER BY is_pinned DESC, id DESC"
             ).fetchall()
-        )
+        else:
+            memos = conn.execute(
+                "SELECT * FROM memos WHERE username=? OR is_shared=1 ORDER BY is_pinned DESC, id DESC",
+                (user,)
+            ).fetchall()
         conn.close()
 
         if not memos:
@@ -760,22 +931,47 @@ def page_memo(user, is_admin):
             memos = [m for m in memos if search.lower() in (m["title"] + m["content"]).lower()]
 
         for memo in memos:
-            c = MEMBER_COLORS.get(memo["username"], "#8b949e")
-            vis = "🌐 공개" if memo["is_shared"] else "🔒 나만"
-            with st.expander(f"{vis}  {memo['title']}  ·  {memo['username']}  ·  {memo['timestamp'][:10]}"):
+            c       = MEMBER_COLORS.get(memo["username"], "#8b949e")
+            vis     = "🌐 공개" if memo["is_shared"] else "🔒 나만"
+            pinned  = memo["is_pinned"]
+            pin_tag = "<span class='tag tag-gold'>📌 고정</span>" if pinned else ""
+            card_cls= "card-pinned" if pinned else "card-accent"
+
+            with st.expander(
+                f"{'📌 ' if pinned else ''}{vis}  {memo['title']}  ·  {memo['username']}  ·  {memo['timestamp'][:10]}"
+            ):
                 st.markdown(
-                    f"<div style='color:#cdd9e5;white-space:pre-wrap;line-height:1.6;'>"
-                    f"{memo['content']}</div>",
+                    f"<div class='card {card_cls}' style='padding:0.8rem 1rem;'>"
+                    f"{pin_tag}"
+                    f"<p style='color:#cdd9e5;white-space:pre-wrap;line-height:1.6;margin-top:0.5rem;'>"
+                    f"{memo['content']}</p></div>",
                     unsafe_allow_html=True
                 )
+
+                act1, act2, act3 = st.columns([1, 1, 3])
+
+                # 핀 토글 (본인 또는 관리자)
                 if is_admin or memo["username"] == user:
-                    if st.button("🗑️ 삭제", key=f"del_memo_{memo['id']}"):
-                        conn = get_db()
-                        conn.execute("DELETE FROM memos WHERE id=?", (memo["id"],))
-                        conn.commit()
-                        conn.close()
-                        log_activity(user, "메모 삭제", memo["title"][:20])
-                        st.rerun()
+                    with act1:
+                        pin_label = "📌 고정 해제" if pinned else "📌 고정하기"
+                        if st.button(pin_label, key=f"pin_memo_{memo['id']}", use_container_width=True):
+                            conn = get_db()
+                            conn.execute(
+                                "UPDATE memos SET is_pinned=? WHERE id=?",
+                                (0 if pinned else 1, memo["id"])
+                            )
+                            conn.commit()
+                            conn.close()
+                            log_activity(user, "메모 핀 토글", memo["title"][:20])
+                            st.rerun()
+                    with act2:
+                        if st.button("🗑️ 삭제", key=f"del_memo_{memo['id']}", use_container_width=True):
+                            conn = get_db()
+                            conn.execute("DELETE FROM memos WHERE id=?", (memo["id"],))
+                            conn.commit()
+                            conn.close()
+                            log_activity(user, "메모 삭제", memo["title"][:20])
+                            st.rerun()
 
 
 # ====================== 페이지: 공유 로그 ======================
@@ -803,7 +999,6 @@ def page_shared(user, is_admin):
 
     for log in logs:
         c = MEMBER_COLORS.get(log["username"], "#8b949e")
-        preview = log["content"][:120] + ("..." if len(log["content"]) > 120 else "")
         with st.expander(f"📌 {log['title']}  ·  {log['timestamp'][:16]}"):
             st.markdown(f"""
             <div class='card card-accent'>
@@ -818,7 +1013,7 @@ def page_shared(user, is_admin):
             </div>""", unsafe_allow_html=True)
 
             # 댓글
-            conn = get_db()
+            conn     = get_db()
             comments = conn.execute(
                 "SELECT * FROM shared_comments WHERE log_id=? ORDER BY id", (log["id"],)
             ).fetchall()
@@ -873,15 +1068,15 @@ def page_code_library(user, is_admin):
     tab_save, tab_browse = st.tabs(["⭐ 코드 저장", "📚 코드 목록"])
 
     with tab_save:
-        title = st.text_input("코드 제목", placeholder="예: Gemini API 스트리밍 호출")
-        desc  = st.text_area("설명 (선택)", placeholder="이 코드가 무엇을 하는지 간단히 설명해주세요", height=70)
+        title        = st.text_input("코드 제목", placeholder="예: DeepSeek API 스트리밍 호출")
+        desc         = st.text_area("설명 (선택)", placeholder="이 코드가 무엇을 하는지 간단히 설명해주세요", height=70)
         default_code = st.session_state.pop("pending_code", "")
-        code  = st.text_area("코드", value=default_code, placeholder="코드를 여기에 붙여넣으세요...", height=320)
+        code         = st.text_area("코드", value=default_code, placeholder="코드를 여기에 붙여넣으세요...", height=320)
         c1, c2 = st.columns(2)
         with c1:
             lang = st.selectbox("언어", ["Python", "JavaScript", "SQL", "Bash", "기타"])
         with c2:
-            tags = st.text_input("태그 (쉼표 구분)", placeholder="예: API, Gemini, 유틸")
+            tags = st.text_input("태그 (쉼표 구분)", placeholder="예: API, DeepSeek, 유틸")
         if st.button("⭐ 라이브러리에 저장", type="primary"):
             if title.strip() and code.strip():
                 conn = get_db()
@@ -904,7 +1099,7 @@ def page_code_library(user, is_admin):
         with sc2:
             lf = st.selectbox("언어 필터", ["전체", "Python", "JavaScript", "SQL", "Bash", "기타"])
 
-        conn = get_db()
+        conn  = get_db()
         codes = conn.execute("SELECT * FROM code_library ORDER BY id DESC").fetchall()
         conn.close()
 
@@ -919,6 +1114,7 @@ def page_code_library(user, is_admin):
                 "💾 저장된 코드가 없습니다</p>",
                 unsafe_allow_html=True
             )
+
         for cd in codes:
             mc = MEMBER_COLORS.get(cd["username"], "#8b949e")
             with st.expander(f"⭐ {cd['title']}  [{cd['language']}]  ·  {cd['username']}"):
@@ -967,14 +1163,25 @@ def page_admin(user):
     with tab1:
         st.markdown("### 팀원별 활동 현황")
         conn = get_db()
+
+        # ⑤ 관리자: 팀원별 활동 bar_chart
+        act_rows = conn.execute(
+            "SELECT username, COUNT(*) as cnt FROM activity_log GROUP BY username"
+        ).fetchall()
+        if act_rows:
+            chart_df = pd.DataFrame([{"팀원": r["username"], "활동 수": r["cnt"]} for r in act_rows])
+            chart_df = chart_df.set_index("팀원")
+            st.bar_chart(chart_df, color="#00ffcc", height=200)
+            st.markdown("<br>", unsafe_allow_html=True)
+
         for name in TEAM_USERS.keys():
             chats   = conn.execute("SELECT COUNT(*) FROM chat_history WHERE username=?", (name,)).fetchone()[0]
             shared  = conn.execute("SELECT COUNT(*) FROM shared_logs WHERE username=?", (name,)).fetchone()[0]
             todos_c = conn.execute("SELECT COUNT(*) FROM todos WHERE created_by=?", (name,)).fetchone()[0]
             acts    = conn.execute("SELECT COUNT(*) FROM activity_log WHERE username=?", (name,)).fetchone()[0]
             codes   = conn.execute("SELECT COUNT(*) FROM code_library WHERE username=?", (name,)).fetchone()[0]
-            mc = MEMBER_COLORS.get(name, "#8b949e")
-            icon = "👑" if name == ADMIN_USER else "🧑‍💻"
+            mc      = MEMBER_COLORS.get(name, "#8b949e")
+            icon    = "👑" if name == ADMIN_USER else "🧑‍💻"
             st.markdown(f"""
             <div class='card card-accent' style='margin:0.5rem 0;'>
                 <div style='display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;'>
@@ -991,7 +1198,7 @@ def page_admin(user):
             </div>""", unsafe_allow_html=True)
         conn.close()
 
-        st.markdown("<br>### 최근 활동 로그 (50개)")
+        st.markdown("### 최근 활동 로그 (50개)")
         conn = get_db()
         logs = conn.execute("SELECT * FROM activity_log ORDER BY id DESC LIMIT 50").fetchall()
         conn.close()
@@ -1042,7 +1249,7 @@ def page_admin(user):
             "대화 기록": "chat_history",
             "활동 로그": "activity_log",
             "공유 로그": "shared_logs",
-            "댓글":     "shared_comments",
+            "댓글":      "shared_comments",
         }
         confirm = st.text_input("확인 문구 입력 ('삭제확인' 을 입력하세요)")
         if st.button("🗑️ 초기화 실행", type="primary"):
@@ -1061,15 +1268,15 @@ def page_admin(user):
 # ====================== 앱 진입점 ======================
 inject_css()
 init_db()
-init_gemini()
+init_deepseek()  # Gemini 통신부 삭제, DeepSeek로 교체됨
 
 # 세션 초기화
 for k, v in [
     ("logged_in_user", None),
-    ("current_view", "home"),
-    ("ai_role", "🗣️ 자유 대화"),
-    ("messages", []),
-    ("show_history", False),
+    ("current_view",   "home"),
+    ("ai_role",        "🗣️ 자유 대화"),
+    ("messages",       []),
+    ("show_history",   False),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1097,10 +1304,10 @@ if st.session_state.logged_in_user is None:
         st.markdown("<h2 style='text-align:center;color:#00ffcc;margin:0 0 0.3rem;'>팀원 로그인</h2>",
                     unsafe_allow_html=True)
         st.markdown("<p style='text-align:center;color:#484f58;font-size:0.8rem;margin-bottom:1.5rem;'>"
-                    "비밀번호는 모두 0000 입니다</p>", unsafe_allow_html=True)
+                    "비밀번호는 관리자만 다릅니다</p>", unsafe_allow_html=True)
 
         username = st.selectbox("👤 팀원 선택", list(TEAM_USERS.keys()))
-        password = st.text_input("🔑 비밀번호", type="password", placeholder="0000")
+        password = st.text_input("🔑 비밀번호", type="password", placeholder="비밀번호 입력")
 
         if st.button("🚀 로그인하기", type="primary", use_container_width=True):
             if TEAM_USERS.get(username) == password:
@@ -1165,17 +1372,17 @@ else:
             st.rerun()
 
         st.markdown(
-            f"<p style='color:#21262d;font-size:0.65rem;text-align:center;margin-top:1rem;'>"
-            f"⚓ AI 팀 관제실 v2.0</p>",
+            "<p style='color:#21262d;font-size:0.65rem;text-align:center;margin-top:1rem;'>"
+            "⚓ AI 팀 관제실 v3.0</p>",
             unsafe_allow_html=True
         )
 
-    # 페이지 라우팅
+    # ── 페이지 라우팅 ──
     v = st.session_state.current_view
-    if   v == "home":         page_home(user, is_admin)
-    elif v == "chat":         page_chat(user)
-    elif v == "todo":         page_todo(user, is_admin)
-    elif v == "memo":         page_memo(user, is_admin)
-    elif v == "shared":       page_shared(user, is_admin)
-    elif v == "code_library": page_code_library(user, is_admin)
+    if   v == "home":              page_home(user, is_admin)
+    elif v == "chat":              page_chat(user)
+    elif v == "todo":              page_todo(user, is_admin)
+    elif v == "memo":              page_memo(user, is_admin)
+    elif v == "shared":            page_shared(user, is_admin)
+    elif v == "code_library":      page_code_library(user, is_admin)
     elif v == "admin" and is_admin: page_admin(user)
