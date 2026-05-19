@@ -1,4 +1,4 @@
-# =====================================================================
+  # =====================================================================
 # ⚓ AI 팀 관제실 — 프로덕션급 통합 마스터 v4.0
 # 주요 추가: ①모바일 반응형 CSS ②Groq 429 백오프 재시도
 #            ③SQLite timeout 동시성 락 방지 ④컨텍스트 정제
@@ -545,53 +545,34 @@ def init_deepseek():
             st.session_state.deepseek_ready = False
 
 
-# ====================== 웹 검색 (DuckDuckGo, 무료·API키 불필요) ======================
-def web_search(query: str, max_results: int = 5) -> str:
-    """DuckDuckGo로 웹 검색 후 결과를 문자열로 반환"""
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
-        if not results:
-            return "검색 결과가 없습니다."
-        lines = []
-        for i, r in enumerate(results, 1):
-            lines.append(f"[{i}] {r.get('title','')}\n{r.get('body','')}\nURL: {r.get('href','')}")
-        return "\n\n".join(lines)
-    except Exception as e:
-        return f"검색 오류: {e}"
-
-
 def call_deepseek(prompt: str, role: str, use_search: bool = False) -> str:
     """
-    Groq llama-3.3-70b API 호출 with 지수 백오프 재시도.
-    use_search=True 이면 DuckDuckGo 결과를 프롬프트에 주입.
+    웹검색 OFF → llama-3.3-70b-versatile
+    웹검색 ON  → groq/compound-mini (Groq 내장 웹검색 자동 실행)
     """
     if not st.session_state.get("deepseek_ready"):
         return "⚠️ GROQ_API_KEY 환경변수가 설정되지 않았습니다. Render.com 환경변수를 확인해주세요."
 
     system = ROLE_PROMPTS.get(role, ROLE_PROMPTS["🗣️ 자유 대화"])
 
-    # 웹 검색 결과 주입
-    search_context = ""
+    # 웹검색 여부에 따라 모델 전환
     if use_search or role == "🔍 웹 검색 도우미":
-        with st.spinner("🔍 웹 검색 중..."):
-            search_context = web_search(prompt)
-        prompt = (
-            f"[웹 검색 결과]\n{search_context}\n\n"
-            f"[사용자 질문]\n{prompt}\n\n"
-            "위 검색 결과를 참고해서 답변해줘. 관련 URL도 포함해."
-        )
+        model      = "groq/compound-mini"   # 내장 웹검색 지원 모델
+        max_tokens = 8192
+    else:
+        model      = "llama-3.3-70b-versatile"
+        max_tokens = 2048
 
     delay = GROQ_BASE_DELAY
     for attempt in range(1, GROQ_MAX_RETRIES + 1):
         try:
             response = st.session_state.deepseek_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user",   "content": prompt}
                 ],
-                max_tokens=2048,
+                max_tokens=max_tokens,
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -688,12 +669,14 @@ def page_home(user, is_admin):
         (m5, "💾", code_n,   "코드 저장"),
     ]:
         with col:
-            st.markdown(f"""
-            <div class='metric-card'>
-                <div class='metric-icon'>{icon}</div>
-                <div class='metric-value'>{val}</div>
-                <div class='metric-label'>{label}</div>
-            </div>""", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='metric-card'>"
+                f"<div class='metric-icon'>{icon}</div>"
+                f"<div class='metric-value'>{val}</div>"
+                f"<div class='metric-label'>{label}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -724,18 +707,18 @@ def page_home(user, is_admin):
             html = ""
             for a in acts:
                 c = MEMBER_COLORS.get(a["username"], "#8b949e")
-                detail_html = (f"<br><span style='color:#6e7681;font-size:0.8rem;'>{a['detail']}</span>"
-                               if a["detail"] else "")
-                html += f"""
-                <div class='activity-item'>
-                    <div class='activity-dot'></div>
-                    <div>
-                        <span style='color:{c};font-weight:600;'>{a["username"]}</span>
-                        <span style='color:#8b949e;'> · {a["action"]}</span>
-                        {detail_html}
-                        <br><span style='color:#484f58;font-size:0.72rem;'>{a["timestamp"]}</span>
-                    </div>
-                </div>"""
+                detail_part = f"<span style='color:#6e7681;font-size:0.8rem;display:block;'>{a['detail']}</span>" if a["detail"] else ""
+                ts_part = f"<span style='color:#484f58;font-size:0.72rem;'>{a['timestamp']}</span>"
+                html += (
+                    f"<div class='activity-item'>"
+                    f"<div class='activity-dot'></div>"
+                    f"<div style='min-width:0;'>"
+                    f"<span style='color:{c};font-weight:600;'>{a['username']}</span>"
+                    f"<span style='color:#8b949e;'> · {a['action']}</span>"
+                    f"{detail_part}"
+                    f"<div>{ts_part}</div>"
+                    f"</div></div>"
+                )
             st.markdown(html, unsafe_allow_html=True)
         else:
             st.markdown(
@@ -745,7 +728,7 @@ def page_home(user, is_admin):
             )
 
         # ── 진행 중 할 일 미리보기 ──
-        st.markdown("<br>### 📋 현재 진행 중인 할 일", unsafe_allow_html=True)
+        st.markdown("### 📋 현재 진행 중인 할 일")
         conn = get_db()
         doing = conn.execute(
             "SELECT * FROM todos WHERE status='doing' ORDER BY timestamp DESC LIMIT 5"
@@ -754,12 +737,14 @@ def page_home(user, is_admin):
         if doing:
             for t in doing:
                 mc = MEMBER_COLORS.get(t["assigned_to"], "#8b949e")
-                st.markdown(f"""
-                <div class='card' style='padding:0.7rem 1rem; margin:0.3rem 0;'>
-                    <span style='color:#e3b341;font-size:0.75rem;'>⚡ 진행 중</span>
-                    <span style='float:right;color:{mc};font-size:0.8rem;font-weight:600;'>{t["assigned_to"]}</span><br>
-                    <span style='color:#e6edf3;font-size:0.9rem;'>{t["task"]}</span>
-                </div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='card' style='padding:0.7rem 1rem;margin:0.3rem 0;'>"
+                    f"<span style='color:#e3b341;font-size:0.75rem;'>⚡ 진행 중</span>"
+                    f"<span style='float:right;color:{mc};font-size:0.8rem;font-weight:600;'>{t['assigned_to']}</span>"
+                    f"<div style='margin-top:0.3rem;color:#e6edf3;font-size:0.9rem;'>{t['task']}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
         else:
             st.markdown("<p style='color:#484f58;font-size:0.85rem;'>진행 중인 할 일이 없습니다.</p>",
                         unsafe_allow_html=True)
@@ -785,12 +770,12 @@ def page_home(user, is_admin):
         if "home_idea" in st.session_state:
             st.markdown(
                 f"<div class='card card-accent' style='margin-top:0.8rem;'>"
-                f"<p style='font-size:0.83rem;color:#cdd9e5;white-space:pre-wrap;'>"
+                f"<p style='font-size:0.83rem;color:#cdd9e5;white-space:pre-wrap;margin:0;'>"
                 f"{st.session_state.home_idea}</p></div>",
                 unsafe_allow_html=True
             )
 
-        st.markdown("<br>### 👥 팀원 현황", unsafe_allow_html=True)
+        st.markdown("### 👥 팀원 현황")
         members = [("최건희", "👑"), ("이서우", "🧑‍💻"), ("현수민", "🧑‍🎨")]
         for name, icon in members:
             c    = MEMBER_COLORS.get(name, "#8b949e")
@@ -800,12 +785,17 @@ def page_home(user, is_admin):
             ).fetchone()
             conn.close()
             last_t = last["timestamp"][11:16] if last else "—"
-            st.markdown(f"""
-            <div class='card' style='padding:0.65rem 1rem;margin:0.25rem 0;'>
-                <span style='color:{c};font-weight:600;'>{icon} {name}</span>
-                {"<span style='background:#1c3a2a;color:#3fb950;font-size:0.7rem;border-radius:4px;padding:1px 6px;float:right;'>관리자</span>" if name == ADMIN_USER else ""}
-                <br><span style='color:#484f58;font-size:0.75rem;'>마지막 활동 {last_t}</span>
-            </div>""", unsafe_allow_html=True)
+            admin_badge = "<span style='background:#1c3a2a;color:#3fb950;font-size:0.7rem;border-radius:4px;padding:1px 6px;float:right;'>관리자</span>" if name == ADMIN_USER else ""
+            st.markdown(
+                f"<div class='card' style='padding:0.65rem 1rem;margin:0.25rem 0;'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                f"<span style='color:{c};font-weight:600;'>{icon} {name}</span>"
+                f"{admin_badge}"
+                f"</div>"
+                f"<div style='color:#484f58;font-size:0.75rem;margin-top:0.2rem;'>마지막 활동 {last_t}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
 
 # ====================== 페이지: AI 대화 ======================
@@ -995,15 +985,17 @@ def page_todo(user, is_admin):
                 mc = MEMBER_COLORS.get(task["assigned_to"], "#8b949e")
                 due_html = (f"<span style='color:#484f58;font-size:0.72rem;'>📅 {task['due_date']}</span><br>"
                             if task["due_date"] else "")
-                st.markdown(f"""
-                <div class='task-card'>
-                    <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;'>
-                        {priority_badge(task["priority"])}
-                        <span style='color:{mc};font-size:0.75rem;font-weight:600;'>{task["assigned_to"]}</span>
-                    </div>
-                    <p style='margin:0.25rem 0 0.4rem;font-size:0.88rem;color:#e6edf3;'>{task["task"]}</p>
-                    {due_html}
-                </div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='task-card'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;'>"
+                    f"{priority_badge(task['priority'])}"
+                    f"<span style='color:{mc};font-size:0.75rem;font-weight:600;'>{task['assigned_to']}</span>"
+                    f"</div>"
+                    f"<div style='margin:0.25rem 0 0.4rem;font-size:0.88rem;color:#e6edf3;'>{task['task']}</div>"
+                    f"{due_html}"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
 
                 btn_map = {
                     "todo":  [("⚡ 시작", "doing")],
@@ -1166,17 +1158,17 @@ def page_shared(user, is_admin):
     for log in logs:
         c = MEMBER_COLORS.get(log["username"], "#8b949e")
         with st.expander(f"📌 {log['title']}  ·  {log['timestamp'][:16]}"):
-            st.markdown(f"""
-            <div class='card card-accent'>
-                <div style='display:flex;gap:0.8rem;align-items:center;margin-bottom:0.8rem;flex-wrap:wrap;'>
-                    {member_badge(log["username"])}
-                    <span class='tag'>{log["ai_role"]}</span>
-                    <span style='color:#484f58;font-size:0.78rem;'>{log["timestamp"]}</span>
-                </div>
-                <div style='color:#cdd9e5;white-space:pre-wrap;line-height:1.6;font-size:0.88rem;'>
-                    {log["content"]}
-                </div>
-            </div>""", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='card card-accent'>"
+                f"<div style='display:flex;gap:0.8rem;align-items:center;margin-bottom:0.8rem;flex-wrap:wrap;'>"
+                f"{member_badge(log['username'])}"
+                f"<span class='tag'>{log['ai_role']}</span>"
+                f"<span style='color:#484f58;font-size:0.78rem;'>{log['timestamp']}</span>"
+                f"</div>"
+                f"<div style='color:#cdd9e5;white-space:pre-wrap;line-height:1.6;font-size:0.88rem;'>{log['content']}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
 
             # 댓글
             conn     = get_db()
@@ -1189,12 +1181,14 @@ def page_shared(user, is_admin):
                 st.markdown("**💬 댓글**")
                 for cm in comments:
                     cc = MEMBER_COLORS.get(cm["username"], "#8b949e")
-                    st.markdown(f"""
-                    <div style='background:#21262d;border-radius:8px;padding:0.6rem 1rem;margin:0.25rem 0;'>
-                        <span style='color:{cc};font-weight:600;font-size:0.85rem;'>{cm["username"]}</span>
-                        <span style='color:#484f58;font-size:0.72rem;margin-left:0.5rem;'>{cm["timestamp"][:16]}</span>
-                        <p style='margin:0.25rem 0 0;color:#cdd9e5;font-size:0.88rem;'>{cm["content"]}</p>
-                    </div>""", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div style='background:#21262d;border-radius:8px;padding:0.6rem 1rem;margin:0.25rem 0;'>"
+                        f"<span style='color:{cc};font-weight:600;font-size:0.85rem;'>{cm['username']}</span>"
+                        f"<span style='color:#484f58;font-size:0.72rem;margin-left:0.5rem;'>{cm['timestamp'][:16]}</span>"
+                        f"<div style='margin:0.25rem 0 0;color:#cdd9e5;font-size:0.88rem;'>{cm['content']}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
 
             ctxt = st.text_input("댓글 달기", key=f"ci_{log['id']}", placeholder="의견을 남겨보세요...")
             bc1, bc2 = st.columns([1, 4])
@@ -1348,20 +1342,21 @@ def page_admin(user):
             codes   = conn.execute("SELECT COUNT(*) FROM code_library WHERE username=?", (name,)).fetchone()[0]
             mc      = MEMBER_COLORS.get(name, "#8b949e")
             icon    = "👑" if name == ADMIN_USER else "🧑‍💻"
-            st.markdown(f"""
-            <div class='card card-accent' style='margin:0.5rem 0;'>
-                <div style='display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;'>
-                    <span style='font-size:1.3rem;'>{icon}</span>
-                    <span style='color:{mc};font-weight:700;font-size:1rem;'>{name}</span>
-                </div>
-                <div style='display:flex;gap:1.5rem;flex-wrap:wrap;'>
-                    <span>💬 대화 <b style='color:#00ffcc;'>{chats}</b></span>
-                    <span>📤 공유 <b style='color:#00ffcc;'>{shared}</b></span>
-                    <span>✅ 할 일 <b style='color:#00ffcc;'>{todos_c}</b></span>
-                    <span>💾 코드 <b style='color:#00ffcc;'>{codes}</b></span>
-                    <span>⚡ 전체 활동 <b style='color:#00ffcc;'>{acts}</b></span>
-                </div>
-            </div>""", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='card card-accent' style='margin:0.5rem 0;'>"
+                f"<div style='display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;'>"
+                f"<span style='font-size:1.3rem;'>{icon}</span>"
+                f"<span style='color:{mc};font-weight:700;font-size:1rem;'>{name}</span>"
+                f"</div>"
+                f"<div style='display:flex;gap:1.5rem;flex-wrap:wrap;'>"
+                f"<span>💬 대화 <b style='color:#00ffcc;'>{chats}</b></span>"
+                f"<span>📤 공유 <b style='color:#00ffcc;'>{shared}</b></span>"
+                f"<span>✅ 할 일 <b style='color:#00ffcc;'>{todos_c}</b></span>"
+                f"<span>💾 코드 <b style='color:#00ffcc;'>{codes}</b></span>"
+                f"<span>⚡ 전체 활동 <b style='color:#00ffcc;'>{acts}</b></span>"
+                f"</div></div>",
+                unsafe_allow_html=True
+            )
         conn.close()
 
         st.markdown("### 최근 활동 로그 (50개)")
@@ -1494,14 +1489,17 @@ else:
     with st.sidebar:
         # 프로필
         mc = MEMBER_COLORS.get(user, "#8b949e")
-        st.markdown(f"""
-        <div style='background:linear-gradient(135deg,#21262d,#1c2333);
-                    border-radius:12px;padding:1.1rem;margin-bottom:1rem;text-align:center;
-                    border:1px solid #30363d;'>
-            <div style='font-size:2rem;'>{"👑" if is_admin else "🧑‍💻"}</div>
-            <div style='color:{mc};font-weight:700;font-size:1rem;margin-top:0.3rem;'>{user}</div>
-            <div style='color:#484f58;font-size:0.72rem;'>{"관리자" if is_admin else "팀원"}</div>
-        </div>""", unsafe_allow_html=True)
+        role_icon = "👑" if is_admin else "🧑‍💻"
+        role_label = "관리자" if is_admin else "팀원"
+        st.markdown(
+            f"<div style='background:linear-gradient(135deg,#21262d,#1c2333);border-radius:12px;"
+            f"padding:1.1rem;margin-bottom:1rem;text-align:center;border:1px solid #30363d;'>"
+            f"<div style='font-size:2rem;'>{role_icon}</div>"
+            f"<div style='color:{mc};font-weight:700;font-size:1rem;margin-top:0.3rem;'>{user}</div>"
+            f"<div style='color:#484f58;font-size:0.72rem;'>{role_label}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
         # AI 모드
         st.markdown(
