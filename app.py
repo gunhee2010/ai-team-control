@@ -51,203 +51,314 @@ GROQ_MAX_RETRIES = 3   # 최대 재시도 횟수
 GROQ_BASE_DELAY  = 5   # 첫 대기(초) — 이후 2배씩 증가
 
 
-# ====================== CSS (모바일 반응형 + 편의성 개선) ======================
+# ====================== CSS ======================
 def inject_css():
     st.markdown("""
 <style>
-/* ── Base & Scrollbar ── */
-.stApp {
-    background-color: #0d1117;
-    color: #e6edf3;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+/* ════════════════════════════════════════════
+   🎨 디자인 토큰 (CSS 변수)
+   ════════════════════════════════════════════ */
+:root {
+    /* 색상 */
+    --bg-base:      #0d1117;
+    --bg-surface:   #161b27;
+    --bg-elevated:  #1c2333;
+    --bg-overlay:   #21262d;
+
+    --border:       #21262d;
+    --border-mid:   #30363d;
+    --border-muted: #3a4149;
+
+    --text-primary:  #e6edf3;
+    --text-secondary:#cdd9e5;
+    --text-muted:    #8b949e;
+    --text-faint:    #484f58;
+
+    --accent:        #00ffcc;
+    --accent-dim:    rgba(0, 255, 204, 0.15);
+    --accent-glow:   rgba(0, 255, 204, 0.08);
+
+    --blue:   #58a6ff;
+    --purple: #bc8cff;
+    --green:  #3fb950;
+    --yellow: #e3b341;
+    --red:    #f85149;
+    --gold:   #f0d000;
+
+    /* 간격 */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+
+    /* 전환 */
+    --transition: 0.18s ease;
 }
-.main .block-container { padding: 2rem 2.5rem 4rem; max-width: 1250px; }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+/* ════════════════════════════════════════════
+   🏗️ 기본 레이아웃
+   ════════════════════════════════════════════ */
+.stApp {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.main .block-container {
+    padding: 2rem 2.5rem 5rem;
+    max-width: 1280px;
+}
 
-/* ── Sidebar ── */
+/* 스크롤바 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ════════════════════════════════════════════
+   🗂️ 사이드바
+   ════════════════════════════════════════════ */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #121620 0%, #0d1117 100%);
-    border-right: 1px solid #21262d;
+    background: linear-gradient(180deg, #111826 0%, var(--bg-base) 100%);
+    border-right: 1px solid var(--border);
 }
 [data-testid="stSidebar"] > div:first-child { padding-top: 1.5rem; }
+
 [data-testid="stSidebar"] .stButton > button {
     width: 100%;
     background: transparent;
-    color: #8b949e;
+    color: var(--text-muted);
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     text-align: left;
-    padding: 0.6rem 1.2rem;
-    margin: 2px 0;
-    font-size: 0.92rem;
-    transition: all 0.2s ease;
+    padding: 0.55rem 1rem;
+    margin: 1px 0;
+    font-size: 0.9rem;
+    transition: all var(--transition);
 }
 [data-testid="stSidebar"] .stButton > button:hover {
-    background: #1f2430;
-    color: #00ffcc;
-    border-color: rgba(0, 255, 204, 0.15);
-    transform: translateX(4px);
+    background: var(--bg-elevated);
+    color: var(--accent);
+    border-color: var(--accent-dim);
+    transform: translateX(3px);
 }
 
-/* ── Cards ── */
+/* ════════════════════════════════════════════
+   🃏 카드
+   ════════════════════════════════════════════ */
 .card {
-    background: #161b27;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 1.2rem 1.5rem;
-    margin: 0.5rem 0;
-    transition: all 0.2s ease;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--radius-lg);
+    padding: 1.1rem 1.4rem;
+    margin: 0.45rem 0;
+    transition: border-color var(--transition), box-shadow var(--transition);
 }
-.card:hover { border-color: rgba(0, 255, 204, 0.25); box-shadow: 0 4px 25px rgba(0,255,204,0.05); }
-.card-accent  { border-left: 4px solid #00ffcc; }
-.card-blue    { border-left: 4px solid #58a6ff; }
-.card-purple  { border-left: 4px solid #bc8cff; }
-.card-pinned  { border-left: 4px solid #f0d000; box-shadow: 0 0 10px rgba(240,208,0,0.08); }
+.card:hover {
+    border-color: rgba(0, 255, 204, 0.22);
+    box-shadow: 0 6px 28px var(--accent-glow);
+}
 
-/* ── Metric Cards ── */
+.card-accent  { border-left: 3px solid var(--accent); }
+.card-blue    { border-left: 3px solid var(--blue); }
+.card-purple  { border-left: 3px solid var(--purple); }
+.card-pinned  {
+    border-left: 3px solid var(--gold);
+    background: linear-gradient(135deg, var(--bg-surface) 0%, #1c1e10 100%);
+    box-shadow: 0 0 16px rgba(240, 208, 0, 0.06);
+}
+
+/* ── 메트릭 카드 ── */
 .metric-card {
-    background: linear-gradient(135deg, #161b27 0%, #192233 100%);
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 1.4rem 1rem;
+    background: linear-gradient(145deg, var(--bg-surface) 0%, #192133 100%);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--radius-lg);
+    padding: 1.3rem 0.8rem;
     text-align: center;
-    transition: all 0.25s ease;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    transition: transform var(--transition), border-color var(--transition);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
 }
-.metric-card:hover { border-color: rgba(0, 255, 204, 0.3); transform: translateY(-3px); }
-.metric-icon  { font-size: 1.5rem; margin-bottom: 0.2rem; }
-.metric-value { font-size: 2.1rem; font-weight: 700; color: #00ffcc; line-height: 1.1; margin: 0.3rem 0; text-shadow: 0 0 10px rgba(0,255,204,0.1); }
-.metric-label { font-size: 0.8rem; color: #8b949e; letter-spacing: 0.04em; }
-
-/* ── Buttons ── */
-.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #00ffcc 0%, #00c9a7 100%);
-    color: #0d1117;
+.metric-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(0, 255, 204, 0.28);
+}
+.metric-icon  { font-size: 1.4rem; margin-bottom: 0.15rem; }
+.metric-value {
+    font-size: 2rem;
     font-weight: 700;
-    border: none;
-    border-radius: 8px;
-    padding: 0.5rem 1.5rem;
-    transition: all 0.25s ease;
+    color: var(--accent);
+    line-height: 1.15;
+    margin: 0.2rem 0;
+    letter-spacing: -0.02em;
+}
+.metric-label { font-size: 0.76rem; color: var(--text-muted); letter-spacing: 0.05em; text-transform: uppercase; }
+
+/* ════════════════════════════════════════════
+   🔘 버튼
+   ════════════════════════════════════════════ */
+.stButton > button {
+    border-radius: var(--radius-md) !important;
+    border: 1px solid var(--border-mid) !important;
+    background: var(--bg-surface) !important;
+    color: var(--text-secondary) !important;
+    font-size: 0.875rem !important;
+    min-height: 38px;
+    transition: all var(--transition) !important;
+}
+.stButton > button:hover {
+    border-color: var(--border-muted) !important;
+    color: var(--text-primary) !important;
+    background: var(--bg-elevated) !important;
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, var(--accent) 0%, #00c4a0 100%) !important;
+    color: var(--bg-base) !important;
+    font-weight: 700 !important;
+    border: none !important;
 }
 .stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #00e6b8 0%, #00b594 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(0,255,204,0.3);
-}
-.stButton > button {
-    border-radius: 8px !important;
-    border: 1px solid #30363d !important;
-    background-color: #161b27 !important;
-    color: #cdd9e5 !important;
-    transition: all 0.2s;
-    /* 모바일 터치 최소 크기 보장 */
-    min-height: 40px;
-}
-.stButton > button:hover { border-color: #8b949e !important; color: #ffffff !important; }
-
-/* ── Typography ── */
-h1 { color: #00ffcc !important; font-size: 1.8rem !important; font-weight: 700 !important; margin-bottom: 0.5rem !important; }
-h2 { color: #e6edf3 !important; font-weight: 600 !important; }
-h3 { color: #cdd9e5 !important; font-weight: 600 !important; }
-p  { color: #cdd9e5; line-height: 1.6; }
-
-/* ── Tags ── */
-.tag {
-    display: inline-block;
-    background: #21262d;
-    color: #58a6ff;
-    border: 1px solid #30363d;
-    border-radius: 20px;
-    padding: 3px 12px;
-    font-size: 0.75rem;
-    margin: 2px;
-    font-weight: 500;
-}
-.tag-green  { color: #3fb950; background: rgba(63,185,80,0.1); border-color: rgba(63,185,80,0.2); }
-.tag-orange { color: #e3b341; background: rgba(227,179,65,0.1); border-color: rgba(227,179,65,0.2); }
-.tag-red    { color: #f85149; background: rgba(248,81,73,0.1); border-color: rgba(248,81,73,0.2); }
-.tag-gold   { color: #f0d000; background: rgba(240,208,0,0.1); border-color: rgba(240,208,0,0.25); }
-
-/* ── Activity Feed ── */
-.activity-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.8rem;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #21262d;
-}
-.activity-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #00ffcc;
-    margin-top: 6px;
-    flex-shrink: 0;
-    box-shadow: 0 0 8px rgba(0,255,204,0.5);
+    background: linear-gradient(135deg, #00e6b8 0%, #00b090 100%) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 5px 18px rgba(0, 255, 204, 0.28) !important;
 }
 
-/* ── Kanban ── */
-.kanban-header {
-    font-weight: 700;
-    margin-bottom: 1rem;
-    padding: 0.6rem 0.8rem;
-    border-radius: 8px;
-    text-align: center;
-    font-size: 0.92rem;
-    letter-spacing: 0.05em;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.15);
-}
-.kh-todo  { background: #21262d; color: #9ca3af; border: 1px solid #30363d; }
-.kh-doing { background: rgba(30,58,95,0.6); color: #93c5fd; border: 1px solid #1e3a5f; }
-.kh-done  { background: rgba(6,78,59,0.6); color: #6ee7b7; border: 1px solid #064e3b; }
-.task-card {
-    background: #161b27;
-    border: 1px solid #30363d;
-    border-radius: 10px;
-    padding: 0.9rem 1.1rem;
-    margin: 0.5rem 0;
-    transition: all 0.2s;
-}
-.task-card:hover { border-color: #58a6ff66; transform: scale(1.01); }
-
-/* ── Inputs & Selectbox ── */
+/* ════════════════════════════════════════════
+   ✍️ 입력 필드
+   ════════════════════════════════════════════ */
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea,
 .stSelectbox > div > div {
-    background-color: #161b27 !important;
-    border: 1px solid #30363d !important;
-    color: #e6edf3 !important;
-    border-radius: 8px !important;
-    /* 모바일: 최소 16px → 자동 줌 방지 */
-    font-size: 16px !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-mid) !important;
+    color: var(--text-primary) !important;
+    border-radius: var(--radius-md) !important;
+    font-size: 0.9rem !important;
 }
 .stTextInput > div > div > input:focus,
 .stTextArea > div > div > textarea:focus {
-    border-color: #00ffccaa !important;
-    box-shadow: 0 0 0 2px rgba(0,255,204,0.15) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-dim) !important;
 }
 
-/* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"] { background: transparent; border-bottom: 1px solid #21262d; gap: 0.5rem; }
-.stTabs [data-baseweb="tab"] { background: transparent; color: #8b949e; border-radius: 8px 8px 0 0; padding: 0.6rem 1.4rem; font-size: 0.9rem; transition: all 0.2s; }
-.stTabs [data-baseweb="tab"]:hover { color: #ffffff; background: #161b27; }
-.stTabs [aria-selected="true"] { background: #161b27 !important; color: #00ffcc !important; border-bottom: 2px solid #00ffcc !important; font-weight: 600; }
+/* ════════════════════════════════════════════
+   🔤 타이포그래피
+   ════════════════════════════════════════════ */
+h1 {
+    color: var(--accent) !important;
+    font-size: 1.75rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.02em !important;
+    margin-bottom: 0.4rem !important;
+}
+h2 { color: var(--text-primary) !important; font-weight: 600 !important; }
+h3 { color: var(--text-secondary) !important; font-weight: 600 !important; }
+p  { color: var(--text-secondary); line-height: 1.65; }
 
-/* ── Expander ── */
-[data-testid="stExpander"] { background: #161b27; border: 1px solid #30363d; border-radius: 10px; margin: 0.5rem 0; }
+/* ════════════════════════════════════════════
+   🏷️ 태그
+   ════════════════════════════════════════════ */
+.tag {
+    display: inline-block;
+    background: var(--bg-overlay);
+    color: var(--blue);
+    border: 1px solid var(--border-mid);
+    border-radius: 99px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    margin: 2px;
+}
+.tag-green  { color: var(--green);  background: rgba(63,185,80,0.1);  border-color: rgba(63,185,80,0.25); }
+.tag-orange { color: var(--yellow); background: rgba(227,179,65,0.1); border-color: rgba(227,179,65,0.25); }
+.tag-red    { color: var(--red);    background: rgba(248,81,73,0.1);  border-color: rgba(248,81,73,0.25); }
+.tag-gold   { color: var(--gold);   background: rgba(240,208,0,0.1);  border-color: rgba(240,208,0,0.28); }
 
-/* ── Chat Messages ── */
+/* ════════════════════════════════════════════
+   ⚡ 활동 피드
+   ════════════════════════════════════════════ */
+.activity-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--border);
+}
+.activity-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-top: 7px;
+    flex-shrink: 0;
+    box-shadow: 0 0 7px rgba(0, 255, 204, 0.55);
+}
+
+/* ════════════════════════════════════════════
+   📋 칸반
+   ════════════════════════════════════════════ */
+.kanban-header {
+    font-weight: 700;
+    margin-bottom: 0.9rem;
+    padding: 0.55rem 0.9rem;
+    border-radius: var(--radius-md);
+    text-align: center;
+    font-size: 0.88rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.kh-todo  { background: var(--bg-overlay); color: var(--text-muted); border: 1px solid var(--border-mid); }
+.kh-doing { background: rgba(30,58,95,0.5); color: #93c5fd; border: 1px solid rgba(30,90,160,0.4); }
+.kh-done  { background: rgba(6,78,59,0.5);  color: #6ee7b7; border: 1px solid rgba(6,120,80,0.4); }
+
+.task-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    margin: 0.4rem 0;
+    transition: border-color var(--transition), transform var(--transition);
+}
+.task-card:hover {
+    border-color: rgba(88, 166, 255, 0.4);
+    transform: translateY(-1px);
+}
+
+/* ════════════════════════════════════════════
+   🗂️ 탭
+   ════════════════════════════════════════════ */
+.stTabs [data-baseweb="tab-list"] {
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+    gap: 0.3rem;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    padding: 0.55rem 1.2rem;
+    font-size: 0.875rem;
+    transition: color var(--transition), background var(--transition);
+}
+.stTabs [data-baseweb="tab"]:hover { color: var(--text-primary); background: var(--bg-surface); }
+.stTabs [aria-selected="true"] {
+    background: var(--bg-surface) !important;
+    color: var(--accent) !important;
+    border-bottom: 2px solid var(--accent) !important;
+    font-weight: 600;
+}
+
+/* ════════════════════════════════════════════
+   💬 채팅
+   ════════════════════════════════════════════ */
 [data-testid="stChatMessage"] {
-    background-color: #161b27 !important;
-    border: 1px solid #21262d !important;
-    border-radius: 12px !important;
-    padding: 1rem !important;
-    margin: 0.6rem 0 !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-lg) !important;
+    padding: 1rem 1.2rem !important;
+    margin: 0.5rem 0 !important;
 }
-[data-testid="stChatMessageUser"] { background-color: #1c2333 !important; border-color: #30363d !important; }
+[data-testid="stChatMessageUser"] {
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-mid) !important;
+}
 [data-testid="stChatMessage"] p,
 [data-testid="stChatMessage"] span,
 [data-testid="stChatMessage"] li,
@@ -255,76 +366,82 @@ p  { color: #cdd9e5; line-height: 1.6; }
 [data-testid="stChatMessage"] ol,
 [data-testid="stChatMessage"] ul,
 .stMarkdown p, .stMarkdown li, .stMarkdown strong {
-    color: #e6edf3 !important;
-    font-size: 0.95rem;
-    line-height: 1.6;
+    color: var(--text-primary) !important;
+    font-size: 0.93rem;
+    line-height: 1.65;
 }
 
-/* ── Code Blocks ── */
-code { background: #21262d !important; color: #ff7b72 !important; padding: 2px 6px !important; border-radius: 4px !important; font-size: 0.88rem !important; }
-pre code { color: #e6edf3 !important; background: transparent !important; padding: 0 !important; font-size: 0.9rem !important; }
-pre { background: #0d1117 !important; border: 1px solid #30363d !important; border-radius: 8px !important; padding: 1rem !important; }
+/* ════════════════════════════════════════════
+   💻 코드 블록
+   ════════════════════════════════════════════ */
+code {
+    background: var(--bg-overlay) !important;
+    color: #ff7b72 !important;
+    padding: 2px 6px !important;
+    border-radius: var(--radius-sm) !important;
+    font-size: 0.85rem !important;
+}
+pre code { color: var(--text-primary) !important; background: transparent !important; padding: 0 !important; }
+pre {
+    background: var(--bg-base) !important;
+    border: 1px solid var(--border-mid) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 1.1rem !important;
+}
 
-/* ── Misc ── */
-hr { border-color: #21262d !important; margin: 1.2rem 0 !important; }
-[data-testid="stAlert"] { border-radius: 8px !important; background-color: #1c1a22 !important; border-color: #443e50 !important; }
-.stSpinner > div { border-color: #00ffcc !important; }
+/* ════════════════════════════════════════════
+   🔧 기타 컴포넌트
+   ════════════════════════════════════════════ */
+[data-testid="stExpander"] {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-mid);
+    border-radius: var(--radius-md);
+    margin: 0.4rem 0;
+}
+[data-testid="stDataFrame"] { border: 1px solid var(--border-mid); border-radius: var(--radius-md); overflow: hidden; }
+[data-testid="stAlert"]     { border-radius: var(--radius-md) !important; background: #1c1820 !important; border-color: #443850 !important; }
+
+hr { border-color: var(--border) !important; margin: 1.2rem 0 !important; }
+.stSpinner > div { border-color: var(--accent) !important; }
 #MainMenu, footer, header { visibility: hidden; }
 
-/* ── Dataframe ── */
-[data-testid="stDataFrame"] { border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+/* 토글 스위치 */
+[data-testid="stToggle"] label { color: var(--text-muted) !important; font-size: 0.875rem !important; }
 
-/* ============================================================
-   📱 모바일 반응형 미디어 쿼리 (≤ 768px)
-   ============================================================ */
+/* ════════════════════════════════════════════
+   📱 모바일 반응형 (≤ 768px)
+   ════════════════════════════════════════════ */
 @media (max-width: 768px) {
-    /* 블록 여백 축소 */
-    .main .block-container { padding: 1rem 0.75rem 3rem !important; }
+    .main .block-container { padding: 0.9rem 0.75rem 3.5rem !important; }
 
-    /* 사이드바: 좁은 화면에서 아이콘 크기 조정 */
-    [data-testid="stSidebar"] .stButton > button {
-        font-size: 0.85rem;
-        padding: 0.55rem 0.8rem;
-    }
+    h1 { font-size: 1.3rem !important; }
 
-    /* h1 폰트 크기 축소 */
-    h1 { font-size: 1.35rem !important; }
+    .metric-card { padding: 1rem 0.5rem; }
+    .metric-value { font-size: 1.65rem; }
+    .metric-label { font-size: 0.68rem; }
 
-    /* 메트릭 카드: 1열 스택 레이아웃으로 전환 */
-    .metric-card { padding: 1rem 0.6rem; }
-    .metric-value { font-size: 1.7rem; }
+    .card { padding: 0.85rem 0.9rem; }
+    .task-card { padding: 0.65rem 0.8rem; margin: 0.3rem 0; }
+    .kanban-header { font-size: 0.78rem; padding: 0.45rem 0.6rem; }
 
-    /* 버튼 최소 높이 & 터치 영역 확보 */
-    .stButton > button { min-height: 48px !important; font-size: 0.88rem !important; }
-    .stButton > button[kind="primary"] { padding: 0.65rem 1.2rem; }
+    .stButton > button { min-height: 44px !important; font-size: 0.84rem !important; }
+    .stButton > button[kind="primary"] { padding: 0.6rem 1.1rem !important; }
 
-    /* 칸반: 열 간격 축소 */
-    .task-card { padding: 0.7rem 0.8rem; margin: 0.35rem 0; }
-    .kanban-header { font-size: 0.82rem; padding: 0.5rem 0.6rem; }
+    [data-testid="stSidebar"] .stButton > button { font-size: 0.84rem; padding: 0.5rem 0.8rem; }
 
-    /* 카드 패딩 축소 */
-    .card { padding: 0.9rem 1rem; }
+    .stTabs [data-baseweb="tab"] { padding: 0.45rem 0.7rem; font-size: 0.8rem; }
+    [data-testid="stChatMessage"] { padding: 0.65rem 0.8rem !important; }
 
-    /* 탭 텍스트 크기 */
-    .stTabs [data-baseweb="tab"] { padding: 0.5rem 0.8rem; font-size: 0.82rem; }
-
-    /* 채팅 입력창 */
-    [data-testid="stChatMessage"] { padding: 0.7rem !important; }
-
-    /* 활동 피드 간격 */
-    .activity-item { gap: 0.5rem; padding: 0.55rem 0; }
-    .activity-dot  { width: 7px; height: 7px; margin-top: 5px; }
-
-    /* 태그 */
-    .tag { padding: 2px 8px; font-size: 0.7rem; }
+    .activity-item { gap: 0.5rem; padding: 0.5rem 0; }
+    .tag { padding: 2px 7px; font-size: 0.68rem; }
 }
 
-/* 초소형 화면 (≤ 380px) */
-@media (max-width: 380px) {
-    .main .block-container { padding: 0.7rem 0.5rem 2.5rem !important; }
-    h1 { font-size: 1.15rem !important; }
-    .metric-value { font-size: 1.45rem; }
-    .stButton > button { min-height: 44px !important; }
+/* 초소형 (≤ 390px) */
+@media (max-width: 390px) {
+    .main .block-container { padding: 0.6rem 0.4rem 2.5rem !important; }
+    h1 { font-size: 1.1rem !important; }
+    .metric-value { font-size: 1.4rem; }
+    .stButton > button { min-height: 42px !important; }
 }
 </style>
 """, unsafe_allow_html=True)
